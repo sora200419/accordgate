@@ -278,7 +278,7 @@ function AccordGateDashboard() {
       walletAddress: payload.walletAddress || walletAccount || null,
     });
     await refreshAll();
-    notify(`已注册 CIS-8004 Agent: ${payload.name}`);
+    notify(`已登记到本地注册表（未写入 CIS-8004）: ${payload.name}`);
   }
 
   async function handleUpdateAgentStatus(id: string, status: AgentStatus) {
@@ -363,16 +363,19 @@ function AccordGateDashboard() {
     const auditRange = `#${oldestSeq}-#${newestSeq}`;
 
     const signed = await anchorAuditRootWithWallet(walletAccount, rootHash, auditRange);
-    await api.createAnchor({
+    // The toast follows the anchor the server stored, which may be downgraded to simulated.
+    const { anchor } = await api.createAnchor({
       signerAddress: signed.signerAddress,
       txHash: signed.txHash,
       mode: signed.mode,
     });
     await refreshAll();
     notify(
-      signed.mode === 'browser-wallet-tx'
-        ? `已通过 Browser Wallet 提交 RegisterData 链上存证 (${signed.txHash.slice(0, 12)}...)`
-        : `已生成 EU AI Act 根哈希 Testnet 存证收据 (${signed.mode})`,
+      anchor.mode === 'browser-wallet-tx'
+        ? `钱包已提交 RegisterData 交易 (${anchor.txHash.slice(0, 12)}...)，服务器未核验`
+        : anchor.mode === 'wallet-signed-attestation'
+          ? '钱包只签名了根哈希（未上链，未发交易）'
+          : '模拟锚定：未签名、未上链',
     );
   }
 
@@ -401,7 +404,7 @@ function AccordGateDashboard() {
     try {
       const res = await api.probeTestnet();
       setTestnetProbe(res);
-      notify(res.reachable ? `Concordium Testnet 连通正常 (${res.latencyMs}ms)` : '已切换为本地确定性加密沙盒引擎');
+      notify(res.reachable ? `Concordium Testnet 连通正常 (${res.latencyMs}ms)` : 'Testnet 不可达，未读取链上状态');
     } finally {
       setProbingTestnet(false);
     }

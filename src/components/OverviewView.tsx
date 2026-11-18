@@ -13,6 +13,7 @@ import {
 import { api } from '../api';
 import type { AuditEntry, OverviewMetrics, TestnetInspectResult, TestnetProbeResult, WorkspaceTab } from '../types';
 import { AuditDecisionText } from './StatusBadge';
+import { SimulatedBadge } from './SimulatedBadge';
 
 interface OverviewViewProps {
   metrics: OverviewMetrics | null;
@@ -65,12 +66,12 @@ export function OverviewView({
               Concordium Trusted Agents Hackathon · 三合一企业合规架构
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 [text-wrap:balance]">
-              Verify Once, Gate Privately, Settle Gaslessly, Audit Continuously
+              Verify, Gate, Pay, Audit — AI Agent 合规网关原型
             </h1>
             <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-              AccordGate 集成 <span className="font-mono">@concordium/web-sdk</span> 真实测试网查询、Ed25519
-              防冒充签名验签、标准 MCP JSON-RPC 2.0 服务、零知识证明隐私门控（Zero PII）、x402 赞助微支付与 EU AI Act
-              哈希链审计。
+              真实部分：<span className="font-mono">@concordium/web-sdk</span> 测试网查询、Ed25519 请求验签、标准 MCP
+              JSON-RPC 2.0 服务与 EU AI Act 哈希链审计。模拟部分（带「模拟」标记）：CIS-8004/CIS-8 链上注册、ZKP（自报属性 +
+              SHA-256 承诺，非零知识证明）、x402 结算与 CIS-3 Gas 代付。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 shrink-0">
@@ -97,7 +98,10 @@ export function OverviewView({
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Verified by Concordium</span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span>本地 Agent 注册表</span>
+              <SimulatedBadge reason="Agent 只登记在本地，没有写入 CIS-8004 / CIS-8 合约" />
+            </span>
             <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400" />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
@@ -108,12 +112,15 @@ export function OverviewView({
               / {metrics ? metrics.totalAgents : '--'} 注册 Agent
             </span>
           </div>
-          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">CIS-8004 + Ed25519 + CIS-8</p>
+          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">Ed25519 真实验签 · CIS-8004/CIS-8 未上链</p>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">ZKP 隐私门控 & MCP</span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span>ZKP 门控 & MCP</span>
+              <SimulatedBadge reason="自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）" />
+            </span>
             <Lock className="h-4 w-4 text-blue-700 dark:text-blue-400" />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
@@ -127,17 +134,20 @@ export function OverviewView({
 
         <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">x402 赞助微支付</span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span>x402 微支付</span>
+              <SimulatedBadge reason="模拟结算：无真实付款，未发送 CIS-3 赞助交易" />
+            </span>
             <Wallet className="h-4 w-4 text-blue-700 dark:text-blue-400" />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="font-mono text-2xl font-semibold text-slate-900 tabular-nums dark:text-slate-100">
               {metrics ? metrics.totalSettledPlt.toFixed(2) : '--'}
             </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">EURt PLT</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">EURt PLT（模拟结算）</span>
           </div>
           <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-            CIS-3 已代付 {metrics ? metrics.totalGasSavedCcd.toFixed(4) : '--'} CCD Gas
+            模拟代付 Gas（估算值）{metrics ? metrics.totalGasSavedCcd.toFixed(4) : '--'} CCD，未发送 CIS-3 交易
           </p>
         </div>
 
@@ -181,10 +191,10 @@ export function OverviewView({
           >
             <span className="font-mono text-xs font-medium text-blue-700 dark:text-blue-400">01 · AgentGate</span>
             <span className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              CIS-8004 + Ed25519 验签
+              本地注册表 + Ed25519 验签
             </span>
             <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              校验 CIS-8004 注册状态、Card SHA-256 摘要、Ed25519 请求签名与 VCDC 企业域名。
+              校验本地注册状态（模拟 CIS-8004，未查合约）、Card SHA-256 摘要、Ed25519 请求签名与 VCDC 企业域名。
             </span>
           </button>
 
@@ -195,10 +205,10 @@ export function OverviewView({
           >
             <span className="font-mono text-xs font-medium text-blue-700 dark:text-blue-400">02 · Zero PII</span>
             <span className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              ZKP 隐私门控与额度锁
+              属性门控（模拟 ZKP）与额度锁
             </span>
             <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              核验管辖区白名单、18+/21+ 年龄门槛与单笔/日预算护栏，服务端零个人隐私落盘。
+              按调用方自报的管辖区与年龄判断白名单和 18+/21+ 门槛（非零知识证明），再检查单笔/日预算护栏；只保存判定结果和 SHA-256 承诺。
             </span>
           </button>
 
@@ -209,10 +219,10 @@ export function OverviewView({
           >
             <span className="font-mono text-xs font-medium text-blue-700 dark:text-blue-400">03 · x402 + MCP</span>
             <span className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              免 Gas 微支付与 MCP 工具
+              x402 微支付（模拟结算）与 MCP 工具
             </span>
             <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              标准 /api/mcp 端点自动触发 HTTP 402 账单，EURt 结算且 CIS-3 代付 CCD Gas。
+              标准 /api/mcp 端点自动触发 HTTP 402 账单；结算与 CIS-3 Gas 代付均为模拟，不发生真实转账。
             </span>
           </button>
 

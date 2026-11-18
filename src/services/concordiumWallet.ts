@@ -63,7 +63,7 @@ export async function anchorAuditRootWithWallet(
   rootHash: string,
   auditRange: string,
 ): Promise<{
-  signerAddress: string;
+  signerAddress: string | null;
   txHash: string;
   mode: OnchainAnchorRecord['mode'];
 }> {
@@ -104,16 +104,11 @@ export async function anchorAuditRootWithWallet(
     }
   }
 
-  // Deterministic Testnet RegisterData payload hash fallback when browser extension is absent
-  const encoded = new TextEncoder().encode(`${payloadText}:${Date.now()}`);
-  const digest = await crypto.subtle.digest('SHA-256', encoded);
-  const simulatedTxHash = Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-
+  // SECURITY S3: no wallet, so nothing is signed or sent. The server stores this as a simulated
+  // anchor with no signer and its own `sim_` placeholder hash.
   return {
-    signerAddress: accountAddress || '3WZE6etJMh38484f3281b15578f21b3033182369a3f8f451d0',
-    txHash: simulatedTxHash,
+    signerAddress: null,
+    txHash: '',
     mode: 'simulated-payload',
   };
 }

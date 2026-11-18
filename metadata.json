@@ -1,6 +1,6 @@
 {
   "name": "AccordGate — Concordium Trusted Agent Compliance Gateway",
-  "description": "Enterprise AI Agent Compliance Gateway unifying Verified by Concordium (CIS-8004/CIS-8/VCDC), ZKP Privacy Gating, x402 Sponsored Micro-Payments, and EU AI Act Hash-Chained Audit Trails.",
+  "description": "Prototype AI agent compliance gateway: Ed25519-signed agent requests, MCP, and a hash-chained EU AI Act audit trail. CIS-8004/CIS-8 registration, ZKP checks, x402 settlement and CIS-3 gas sponsorship are simulated.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

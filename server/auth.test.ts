@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -701,5 +702,211 @@ describe('S7: agent request freshness (timestamp window + single-use nonce)', ()
       const later = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint));
       assert.equal(step(later, 'freshness')?.status, 'passed');
     });
+  });
+});
+
+describe('S3: simulated results are labelled as simulated', () => {
+  let ctx: Awaited<ReturnType<typeof startApp>>;
+  let cookie: string;
+  let agentDid: string;
+  const restEndpoint = '/api/rest/age-gated-research';
+  const SIM_HASH = /^sim_[0-9a-f]{56}$/;
+
+  before(async () => {
+    clock = FIXED_START;
+    ctx = await startApp([owner.base58]);
+  });
+  after(() => ctx.server.close());
+
+  beforeEach(async () => {
+    cookie = await signIn(ctx.base);
+    const agents = await call(ctx.base, 'GET', '/api/agents');
+    const active = agents.json.agents.find((a: any) => a.status === 'active' && !a.parentAgentId);
+    assert.ok(active, 'seed has an active root agent');
+    agentDid = active.did;
+  });
+
+  const probe = (paymentReceiptId?: string) =>
+    call(ctx.base, 'POST', '/api/sandbox/probe', {
+      cookie,
+      body: { agentDid, endpointPath: restEndpoint, jurisdictionClaim: 'EU', ageClaim: 30, principalVerifiedClaim: true, paymentReceiptId },
+    });
+  const trace = (res: { json: any }, key: string) => res.json.traces.find((t: any) => t.key === key);
+
+  test('x402: invoice, settlement hash, receipt and traces say simulated; no fake sponsor address', async () => {
+    const challenged = await probe();
+    assert.equal(challenged.status, 402, JSON.stringify(challenged.json));
+    const invoice = challenged.json.invoice;
+    assert.equal(invoice.simulated, true);
+    assert.equal(invoice.sponsorAccount, 'simulated-sponsor');
+    assert.equal(challenged.json.headers['X-CIS3-Sponsor'], 'simulated-sponsor');
+    assert.match(trace(challenged, 'x402').title, /simulated/);
+
+    const settled = await call(ctx.base, 'POST', '/api/x402/settle', { cookie, body: { invoiceId: invoice.invoiceId } });
+    assert.equal(settled.status, 200);
+    assert.match(settled.json.invoice.txHash, SIM_HASH);
+    assert.equal(settled.json.invoice.simulated, true);
+
+    const paid = await probe(invoice.invoiceId);
+    assert.equal(paid.status, 200, JSON.stringify(paid.json));
+    assert.equal(paid.json.toolResponse.x402Receipt.simulated, true);
+    assert.match(paid.json.toolResponse.x402Receipt.txHash, SIM_HASH);
+    assert.match(trace(paid, 'x402').detail, /Simulated settlement/);
+    assert.match(paid.json.audit.reason, /simulated settlement/);
+  });
+
+  test('step 01 says local registry, and the ZKP step says self-reported, not a proof', async () => {
+    const res = await probe();
+    const gate = trace(res, 'agentgate');
+    assert.match(gate.title, /local registry/);
+    assert.match(gate.detail, /CIS-8004 contract not queried/);
+    assert.doesNotMatch(gate.detail, /Verified active CIS-8004/);
+    const zkp = trace(res, 'zkp');
+    assert.match(zkp.title, /simulated/);
+    assert.match(zkp.detail, /no zero-knowledge proof checked/);
+  });
+
+  test('anchor without wallet data is stored as simulated: no signer, sim_ hash, not ONCHAIN_ANCHORED', async () => {
+    const res = await call(ctx.base, 'POST', '/api/anchors', { cookie, body: {} });
+    assert.equal(res.status, 201);
+    assert.equal(res.json.anchor.mode, 'simulated-payload');
+    assert.equal(res.json.anchor.signerAddress, null);
+    assert.match(res.json.anchor.txHash, SIM_HASH);
+    const logs = await call(ctx.base, 'GET', '/api/audit');
+    const last = logs.json.logs.find((l: any) => l.x402ReceiptId === res.json.anchor.txHash);
+    assert.equal(last.decision, 'ANCHOR_NOT_ONCHAIN');
+    assert.match(last.reason, /Simulated anchor/);
+  });
+
+  test('a wallet mode without signer or hash falls back to simulated', async () => {
+    const res = await call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'browser-wallet-tx', txHash: 'ab'.repeat(32) } });
+    assert.equal(res.json.anchor.mode, 'simulated-payload');
+    assert.equal(res.json.anchor.signerAddress, null);
+    assert.match(res.json.anchor.txHash, SIM_HASH);
+  });
+
+  test('only browser-wallet-tx is ONCHAIN_ANCHORED; an attestation is not', async () => {
+    const signer = owner.base58;
+    const tx = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32) },
+    });
+    const att = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'wallet-signed-attestation', signerAddress: signer, txHash: 'cd'.repeat(32) },
+    });
+    assert.equal(tx.json.anchor.mode, 'browser-wallet-tx');
+    assert.equal(att.json.anchor.mode, 'wallet-signed-attestation');
+    const logs = (await call(ctx.base, 'GET', '/api/audit')).json.logs;
+    const byHash = (h: string) => logs.find((l: any) => l.x402ReceiptId === h);
+    assert.equal(byHash('ab'.repeat(32)).decision, 'ONCHAIN_ANCHORED');
+    assert.match(byHash('ab'.repeat(32)).reason, /not checked by the server/);
+    assert.equal(byHash('cd'.repeat(32)).decision, 'ANCHOR_NOT_ONCHAIN');
+  });
+
+  test('every failing step 01 trace says local registry, never on-chain or CIS-8004 registry', async () => {
+    const agents = (await call(ctx.base, 'GET', '/api/agents')).json.agents;
+    const revoked = agents.find((a: any) => a.status === 'revoked');
+    assert.ok(revoked, 'seed has a revoked agent');
+    const cases = [
+      { agentDid: 'did:ccd:testnet:unknown-agent' },
+      { agentDid: revoked.did },
+      { agentDid, simulateTamperedCard: true },
+    ];
+    for (const extra of cases) {
+      const res = await call(ctx.base, 'POST', '/api/sandbox/probe', {
+        cookie,
+        body: { endpointPath: restEndpoint, jurisdictionClaim: 'EU', ageClaim: 30, principalVerifiedClaim: true, ...extra },
+      });
+      const gate = trace(res, 'agentgate');
+      assert.equal(gate?.status, 'failed', JSON.stringify(res.json));
+      assert.match(gate.title, /local registry/);
+      assert.match(gate.detail, /local registry/);
+      assert.doesNotMatch(`${gate.title} ${gate.detail}`, /on-chain|in CIS-8004|CIS-8004 Registry/);
+    }
+  });
+
+  test('a failed ZKP step says self-reported / simulated, never "proof missing"', async () => {
+    const res = await call(ctx.base, 'POST', '/api/sandbox/probe', {
+      cookie,
+      body: { agentDid, endpointPath: restEndpoint, jurisdictionClaim: 'EU', ageClaim: 12, principalVerifiedClaim: false },
+    });
+    assert.equal(res.status, 403, JSON.stringify(res.json));
+    assert.equal(res.json.audit.decision, 'BLOCKED_ZKP_FAILED');
+    assert.match(res.json.audit.reason, /simulated ZKP, no proof checked/);
+    assert.match(res.json.audit.reason, /Self-reported principal KYC claim missing/);
+    assert.doesNotMatch(res.json.audit.reason, /proof missing|proof required|ZKP verification failed/);
+    assert.match(trace(res, 'zkp').detail, /no zero-knowledge proof checked/);
+  });
+
+  test('browser-wallet-tx with a hash that is not 64 hex is stored as simulated', async () => {
+    const res = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'browser-wallet-tx', signerAddress: owner.base58, txHash: 'not-a-tx-hash' },
+    });
+    assert.equal(res.json.anchor.mode, 'simulated-payload');
+    assert.equal(res.json.anchor.signerAddress, null);
+    assert.match(res.json.anchor.txHash, SIM_HASH);
+  });
+
+  test('audit.anchored webhook says simulated / reported by wallet / not verified, for all three modes', async () => {
+    const bodies: any[] = [];
+    const receiver = http.createServer((req, res) => {
+      let data = '';
+      req.on('data', (c) => (data += c));
+      req.on('end', () => {
+        bodies.push(JSON.parse(data));
+        res.end('ok');
+      });
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/hook`;
+      const wh = await call(ctx.base, 'POST', '/api/webhooks', { cookie, body: { label: 's3', url, enabledEvents: ['audit.anchored'] } });
+      assert.equal(wh.status, 201, JSON.stringify(wh.json));
+      const signer = owner.base58;
+      await call(ctx.base, 'POST', '/api/anchors', { cookie, body: {} });
+      await call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'wallet-signed-attestation', signerAddress: signer, txHash: 'cd'.repeat(32) } });
+      await call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32) } });
+      const deadline = Date.now() + 5000;
+      while (bodies.length < 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+      assert.equal(bodies.length, 3, 'three webhook deliveries');
+      const byMode = (m: string) => bodies.find((b) => b.payload.mode === m).payload;
+      for (const p of bodies.map((b) => b.payload)) {
+        assert.equal(p.serverVerifiedOnChain, false);
+        assert.ok(!('onChain' in p), 'no unqualified onChain field');
+      }
+      assert.equal(byMode('simulated-payload').simulated, true);
+      assert.equal(byMode('simulated-payload').reportedOnChainByWallet, false);
+      assert.equal(byMode('wallet-signed-attestation').simulated, false);
+      assert.equal(byMode('wallet-signed-attestation').reportedOnChainByWallet, false);
+      assert.equal(byMode('browser-wallet-tx').simulated, false);
+      assert.equal(byMode('browser-wallet-tx').reportedOnChainByWallet, true);
+    } finally {
+      await new Promise((r) => receiver.close(r));
+    }
+  });
+
+  test('MCP initialize lists what is simulated', async () => {
+    const res = await call(ctx.base, 'POST', '/api/mcp', { body: { jsonrpc: '2.0', id: 1, method: 'initialize' } });
+    assert.equal(res.status, 200);
+    const simulated: string[] = res.json.result.simulated;
+    assert.ok(Array.isArray(simulated));
+    for (const word of ['CIS-8004', 'CIS-3', 'x402', 'ZKP']) {
+      assert.ok(simulated.some((s) => s.includes(word)), `simulated list mentions ${word}`);
+    }
+  });
+
+  test('fresh seed has no 0x-style fake hashes, invented sponsor or wallet addresses', async () => {
+    const raw = fs.readFileSync(process.env.ACCORDGATE_DB_PATH as string, 'utf8');
+    assert.doesNotMatch(raw, /0xccd_/);
+    assert.doesNotMatch(raw, /Sponsor"/);
+    assert.doesNotMatch(raw, /EuroTreasury88/);
+    const db = JSON.parse(raw);
+    for (const inv of db.invoices) {
+      assert.equal(inv.simulated, true);
+      if (inv.txHash) assert.match(inv.txHash, SIM_HASH);
+    }
+    for (const entry of db.auditLogs) assert.match(entry.reason, /^\[seed demo data\]/);
   });
 });

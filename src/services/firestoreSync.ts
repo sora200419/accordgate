@@ -355,7 +355,8 @@ export async function syncWorkspaceToFirestore(
         rootHash: normalizeHash64(anchor.rootHash),
         auditRange: anchor.auditRange.slice(0, 64),
         totalEntries: Math.max(1, Math.trunc(anchor.totalEntries || 1)),
-        signerAddress: anchor.signerAddress.slice(0, 128),
+        // Simulated anchors have no signer; the Firestore rule needs a 10–128 char string.
+        signerAddress: (anchor.signerAddress ?? 'none (simulated)').slice(0, 128),
         txHash: anchor.txHash.slice(0, 128),
         network: anchor.network === 'mainnet' ? 'mainnet' : 'testnet',
         mode: anchor.mode,

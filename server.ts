@@ -14,7 +14,7 @@ import { createAgentReplayGuard, DEFAULT_PER_AGENT_CAP } from './server/agentFre
 import type { AgentReplayGuard } from './server/agentFreshness.ts';
 import {
   computeAgentCardHash,
-  generateMockTxHash,
+  generateSimulatedTxHash,
   generateZkpCommitment,
   sha256Hex,
   signAgentRequest,
@@ -27,7 +27,7 @@ import {
   loadDatabase,
   resetDatabase,
   saveDatabase,
-  SPONSOR_FACILITATOR_ACCOUNT,
+  SIMULATED_SPONSOR,
   verifyAuditHashChain,
 } from './server/store.ts';
 import type {
@@ -238,7 +238,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
   const agent = db.agents.find((a) => a.did === input.agentDid);
   const traces: PipelineStepTrace[] = [];
 
-  // Step 1: AgentGate Check (CIS-8004 + Agent Card SHA-256)
+  // Step 1: AgentGate Check (local registry + Agent Card SHA-256; the CIS-8004 contract is not read, SECURITY S3)
   if (!agent) {
     const zkpSummary = {
       principalVerified: false,
@@ -259,9 +259,9 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     traces.push({
       step: 1,
       key: 'agentgate',
-      title: 'AgentGate (CIS-8004 Registry)',
+      title: 'AgentGate (local registry; CIS-8004 simulated)',
       status: 'failed',
-      detail: `Agent DID ${input.agentDid} is not registered in CIS-8004 (10082:0).`,
+      detail: `Agent DID ${input.agentDid} is not in the local registry (CIS-8004 contract not queried).`,
     });
     const audit = appendAuditEntryToDb(db, {
       requestId,
@@ -306,9 +306,9 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     traces.push({
       step: 1,
       key: 'agentgate',
-      title: 'AgentGate (CIS-8004 Registry)',
+      title: 'AgentGate (local registry; CIS-8004 simulated)',
       status: 'failed',
-      detail: `Agent status is "${agent.status.toUpperCase()}" in CIS-8004 registry (${agent.registryContract}).`,
+      detail: `Agent status is "${agent.status.toUpperCase()}" in the local registry (CIS-8004 contract not queried).`,
       metadata: { status: agent.status, did: agent.did },
     });
     const audit = appendAuditEntryToDb(db, {
@@ -357,7 +357,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     traces.push({
       step: 1,
       key: 'agentgate',
-      title: 'AgentGate (CIS-8004 + Delegation)',
+      title: 'AgentGate (local registry; CIS-8004 simulated)',
       status: 'failed',
       detail: `Delegation parent "${parentAgent.name}" is "${parentAgent.status.toUpperCase()}". Sub-agent access blocked.`,
       metadata: { parentDid: parentAgent.did, parentStatus: parentAgent.status },
@@ -410,9 +410,9 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     traces.push({
       step: 1,
       key: 'agentgate',
-      title: 'AgentGate (CIS-8004 + Delegation)',
+      title: 'AgentGate (local registry; CIS-8004 simulated)',
       status: 'failed',
-      detail: `Agent Card SHA-256 mismatch: presented ${presentedCardHash.slice(0, 14)}... != on-chain ${canonicalDigest.slice(0, 14)}...`,
+      detail: `Agent Card SHA-256 mismatch: presented ${presentedCardHash.slice(0, 14)}... != local registry ${canonicalDigest.slice(0, 14)}...`,
       metadata: { presentedCardHash, expectedCardHash: canonicalDigest },
     });
     const audit = appendAuditEntryToDb(db, {
@@ -446,9 +446,9 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
   traces.push({
     step: 1,
     key: 'agentgate',
-    title: 'AgentGate (CIS-8004 + Delegation)',
+    title: 'AgentGate (local registry; CIS-8004 simulated)',
     status: 'passed',
-    detail: `Verified active CIS-8004 agent · Card (${canonicalDigest.slice(0, 12)}...) · ${
+    detail: `Local registry check: status active, Card digest matches (${canonicalDigest.slice(0, 12)}...); CIS-8004 contract not queried · ${
       parentAgent ? `Delegated by "${parentAgent.name}" (depth ${agent.delegationDepth})` : 'Root Principal Agent'
     }.`,
     metadata: { did: agent.did, cardHash: canonicalDigest, contract: agent.registryContract },
@@ -703,20 +703,20 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
 
   if (!principalVerified || !ageThresholdMet || !jurisdictionMatched || !vcdcMatched) {
     const failedReasons: string[] = [];
-    if (!principalVerified) failedReasons.push('Principal KYC proof missing');
+    if (!principalVerified) failedReasons.push('Self-reported principal KYC claim missing');
     if (!ageThresholdMet) failedReasons.push(`Age predicate >= ${policy.requiredZkpPredicates.minAge} failed`);
     if (!jurisdictionMatched)
       failedReasons.push(
         `Jurisdiction "${input.jurisdictionClaim}" outside [${policy.requiredZkpPredicates.allowedJurisdictions.join(', ')}]`,
       );
-    if (!vcdcMatched) failedReasons.push('VCDC domain proof required');
+    if (!vcdcMatched) failedReasons.push('VCDC domain binding required');
 
     traces.push({
       step: 4,
       key: 'zkp',
-      title: 'ZKP Privacy Gatekeeper',
+      title: 'ZKP Gatekeeper (simulated: self-reported claims + SHA-256 commitment)',
       status: 'failed',
-      detail: `${failedReasons.join(' · ')} (Zero PII retained).`,
+      detail: `${failedReasons.join(' · ')} (self-reported claims; no zero-knowledge proof checked).`,
       metadata: { zkpClaims, required: policy.requiredZkpPredicates },
     });
 
@@ -727,7 +727,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
       endpointPath: policy.endpointPath,
       protocol: policy.protocol,
       decision: 'BLOCKED_ZKP_FAILED',
-      reason: `ZKP verification failed: ${failedReasons.join('; ')}`,
+      reason: `Self-reported claims do not meet the policy (simulated ZKP, no proof checked): ${failedReasons.join('; ')}`,
       zkpClaims,
       x402ReceiptId: null,
       amountPlt: 0,
@@ -747,9 +747,9 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
   traces.push({
     step: 4,
     key: 'zkp',
-    title: 'ZKP Privacy Gatekeeper',
+    title: 'ZKP Gatekeeper (simulated: self-reported claims + SHA-256 commitment)',
     status: 'passed',
-    detail: `ZKP predicates satisfied (${policy.requiredZkpPredicates.allowedJurisdictions.join('/')}${
+    detail: `Self-reported claims meet the policy, no zero-knowledge proof checked (${policy.requiredZkpPredicates.allowedJurisdictions.join('/')}${
       policy.requiredZkpPredicates.minAge ? `, ${policy.requiredZkpPredicates.minAge}+` : ''
     }${policy.requiredZkpPredicates.requireVcdcDomain ? `, VCDC: ${agent.vcdcDomain}` : ''}) · PII Stored: false.`,
     metadata: { zkpClaims },
@@ -810,7 +810,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     metadata: { requestedSpend, effectivePerCallCap, effectiveDailyCap },
   });
 
-  // Step 5: x402 Payment + CIS-3 Sponsored Gas
+  // Step 5: x402 Payment + CIS-3 Sponsored Gas (both simulated, SECURITY S3)
   let settledInvoice: X402Invoice | null = null;
   if (policy.x402PricePlt > 0) {
     if (input.paymentReceiptId) {
@@ -831,22 +831,23 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
         endpointPath: policy.endpointPath,
         amountPlt: policy.x402PricePlt,
         asset: policy.asset,
-        sponsorAccount: SPONSOR_FACILITATOR_ACCOUNT,
+        sponsorAccount: SIMULATED_SPONSOR,
         gasFeeCcd: 0.0121,
         gasPaidByAgent: 0,
         status: 'challenged',
         txHash: null,
         createdAt: new Date().toISOString(),
         settledAt: null,
+        simulated: true,
       };
       db.invoices.push(invoice);
 
       traces.push({
         step: 6,
         key: 'x402',
-        title: 'x402 Payment & CIS-3 Sponsored Tx',
+        title: 'x402 Payment & CIS-3 Sponsored Tx (simulated)',
         status: 'challenged',
-        detail: `HTTP 402 Payment Required: ${invoice.amountPlt.toFixed(2)} ${invoice.asset} · Gas sponsored by CIS-3 Facilitator (0 CCD paid by agent).`,
+        detail: `HTTP 402 Payment Required: ${invoice.amountPlt.toFixed(2)} ${invoice.asset} · simulated settlement, no payment or CIS-3 sponsored transaction is sent.`,
         metadata: { invoice },
       });
 
@@ -857,7 +858,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
         endpointPath: policy.endpointPath,
         protocol: policy.protocol,
         decision: 'PAYMENT_REQUIRED',
-        reason: `Issued HTTP 402 x402 invoice (${invoice.invoiceId}) for ${invoice.amountPlt.toFixed(2)} ${invoice.asset}.`,
+        reason: `Issued HTTP 402 x402 invoice (${invoice.invoiceId}) for ${invoice.amountPlt.toFixed(2)} ${invoice.asset} (simulated settlement).`,
         zkpClaims,
         x402ReceiptId: invoice.invoiceId,
         amountPlt: invoice.amountPlt,
@@ -882,19 +883,19 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     traces.push({
       step: 6,
       key: 'x402',
-      title: 'x402 Payment & CIS-3 Sponsored Tx',
+      title: 'x402 Payment & CIS-3 Sponsored Tx (simulated)',
       status: 'passed',
-      detail: `Settled ${settledInvoice.amountPlt.toFixed(2)} ${settledInvoice.asset} via ${settledInvoice.txHash?.slice(
+      detail: `Simulated settlement of ${settledInvoice.amountPlt.toFixed(2)} ${settledInvoice.asset} (${settledInvoice.txHash?.slice(
         0,
         18,
-      )}... · Agent gas paid: 0 CCD (CIS-3 sponsored).`,
+      )}..., not on chain, no transfer) · CIS-3 gas sponsorship simulated.`,
       metadata: { invoice: settledInvoice },
     });
   } else {
     traces.push({
       step: 6,
       key: 'x402',
-      title: 'x402 Payment & CIS-3 Sponsored Tx',
+      title: 'x402 Payment & CIS-3 Sponsored Tx (simulated)',
       status: 'skipped',
       detail: 'Zero-fee internal compliance endpoint (0.00 EURt).',
     });
@@ -912,8 +913,8 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
     endpointPath: policy.endpointPath,
     protocol: policy.protocol,
     decision: 'ALLOWED',
-    reason: `Allowed via AgentGate + Ed25519 + RateLimit + ZKP gatekeeper${
-      settledInvoice ? ` + x402 (${settledInvoice.amountPlt.toFixed(2)} ${settledInvoice.asset})` : ''
+    reason: `Allowed via AgentGate (local registry) + Ed25519 + RateLimit + ZKP gatekeeper (simulated)${
+      settledInvoice ? ` + x402 (${settledInvoice.amountPlt.toFixed(2)} ${settledInvoice.asset}, simulated settlement)` : ''
     }.`,
     zkpClaims,
     x402ReceiptId: settledInvoice ? settledInvoice.invoiceId : null,
@@ -951,15 +952,16 @@ function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineConte
             txHash: settledInvoice.txHash,
             amountPlt: settledInvoice.amountPlt,
             gasPaidByAgentCcd: 0,
+            simulated: true,
           }
         : null,
       resultSummary:
         policy.protocol === 'MCP'
-          ? `MCP tool "${policy.serviceName}" executed under verified EU AI Act governance.`
-          : `REST payload delivered for "${policy.serviceName}" under ZKP privacy gate.`,
+          ? `MCP tool "${policy.serviceName}" executed; decision recorded in the EU AI Act audit chain.`
+          : `REST payload delivered for "${policy.serviceName}" under the (simulated) ZKP gate.`,
     },
     headers: {
-      'X-AgentGate-Status': 'verified-active',
+      'X-AgentGate-Status': 'active-local-registry',
       'X-Ed25519-Verified': 'true',
       'X-ZKP-Commitment': zkpCommitment,
       'X-EU-AI-Act-Audit-Hash': audit.entryHash,
@@ -1167,9 +1169,9 @@ export function createApp(deps: AppDeps) {
       endpointPath: '/registry/cis-8004',
       protocol: 'GOVERNANCE',
       decision: 'AGENT_REGISTERED',
-      reason: `Registered agent "${agent.name}" on CIS-8004${
+      reason: `Registered agent "${agent.name}" in the local registry (not written to CIS-8004)${
         resolvedParentId ? ` (delegated depth ${delegationDepth})` : ''
-      } with Ed25519 keypair & CIS-8 ${agent.externalKeys[0].chain} key binding.`,
+      } with Ed25519 keypair & CIS-8 ${agent.externalKeys[0].chain} key binding (not verified on chain).`,
       zkpClaims: {
         principalVerified: true,
         ageThresholdMet: true,
@@ -1224,7 +1226,7 @@ export function createApp(deps: AppDeps) {
       endpointPath: '/registry/cis-8004/status',
       protocol: 'GOVERNANCE',
       decision: nextStatus === 'revoked' ? 'GOVERNANCE_REVOKED' : 'GOVERNANCE_REACTIVATED',
-      reason: `CIS-8004 status changed from ${prevStatus} to ${nextStatus} by compliance administrator.`,
+      reason: `Local registry status changed from ${prevStatus} to ${nextStatus} by compliance administrator (not written to CIS-8004).`,
       zkpClaims: {
         principalVerified: agent.verifiedPrincipal,
         ageThresholdMet: true,
@@ -1600,7 +1602,9 @@ export function createApp(deps: AppDeps) {
     }
     if (invoice.status !== 'settled') {
       invoice.status = 'settled';
-      invoice.txHash = generateMockTxHash(invoice.invoiceId + invoice.agentDid);
+      // SECURITY S3: nothing is paid or sent to the chain; the hash is a `sim_` placeholder.
+      invoice.txHash = generateSimulatedTxHash(invoice.invoiceId + invoice.agentDid);
+      invoice.simulated = true;
       invoice.settledAt = new Date().toISOString();
       saveDatabase(db);
     }
@@ -1684,6 +1688,13 @@ export function createApp(deps: AppDeps) {
             tools: { listChanged: false },
           },
           concordiumStandards: ['CIS-8004', 'CIS-8', 'CIS-3', 'x402', 'ZKP-Zero-PII'],
+          // SECURITY S3: which of the standards above are only simulated by this gateway.
+          simulated: [
+            'CIS-8004/CIS-8 registration (local registry, nothing written to or read from the contracts)',
+            'CIS-3 gas sponsorship (no sponsored transaction)',
+            'x402 settlement (no payment, sim_ hash)',
+            'ZKP (self-reported claims + SHA-256 commitment, not a zero-knowledge proof)',
+          ],
         },
       });
       return;
@@ -2007,21 +2018,36 @@ export function createApp(deps: AppDeps) {
     const latestEntry = db.auditLogs[db.auditLogs.length - 1];
     const rootHash = latestEntry?.entryHash ?? '0'.repeat(64);
     const auditRange = latestEntry ? `#1 — #${latestEntry.seq}` : '#0';
+    // SECURITY S3: a wallet mode counts only with a signer and a 64-hex hash (a Concordium tx hash
+    // or a SHA-256 signature digest); anything else is stored as simulated, with no signer and a
+    // `sim_` hash. browser-wallet-tx is the wallet's report and is not looked up on chain by the server.
+    const claimedSigner = typeof signerAddress === 'string' ? signerAddress.trim() : '';
+    const claimedHash = typeof txHash === 'string' ? txHash.trim() : '';
+    const anchorMode: OnchainAnchorRecord['mode'] =
+      (mode === 'browser-wallet-tx' || mode === 'wallet-signed-attestation') &&
+      claimedSigner &&
+      /^[0-9a-f]{64}$/i.test(claimedHash)
+        ? mode
+        : 'simulated-payload';
+    const simulatedAnchor = anchorMode === 'simulated-payload';
+    const onChain = anchorMode === 'browser-wallet-tx';
     const anchor: OnchainAnchorRecord = {
       id: 'anc-' + crypto.randomUUID().slice(0, 8),
       rootHash,
       auditRange,
       totalEntries: db.auditLogs.length,
-      signerAddress: String(signerAddress || SPONSOR_FACILITATOR_ACCOUNT),
-      txHash: String(txHash || generateMockTxHash(rootHash + Date.now())),
+      signerAddress: simulatedAnchor ? null : claimedSigner,
+      txHash: simulatedAnchor ? generateSimulatedTxHash(rootHash + Date.now()) : claimedHash,
       network: 'testnet',
-      mode:
-        mode === 'browser-wallet-tx' || mode === 'wallet-signed-attestation'
-          ? mode
-          : 'simulated-payload',
+      mode: anchorMode,
       createdAt: new Date().toISOString(),
     };
     db.onchainAnchors.unshift(anchor);
+    const anchorReason = onChain
+      ? `Anchored EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange} on Concordium Testnet via RegisterData (tx reported by the wallet, not checked by the server).`
+      : anchorMode === 'wallet-signed-attestation'
+        ? `Wallet signed the EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; signature digest only, not on chain.`
+        : `Simulated anchor of EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; nothing signed or sent to the chain.`;
 
     appendAuditEntryToDb(db, {
       requestId: 'anc-' + crypto.randomUUID().slice(0, 8),
@@ -2029,8 +2055,8 @@ export function createApp(deps: AppDeps) {
       agentName: 'Concordium Anchor Service',
       endpointPath: '/registry/concordium-anchor',
       protocol: 'GOVERNANCE',
-      decision: 'ONCHAIN_ANCHORED',
-      reason: `Anchored EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange} on Concordium Testnet (${anchor.mode}).`,
+      decision: onChain ? 'ONCHAIN_ANCHORED' : 'ANCHOR_NOT_ONCHAIN',
+      reason: anchorReason,
       zkpClaims: {
         principalVerified: true,
         ageThresholdMet: true,
@@ -2050,6 +2076,10 @@ export function createApp(deps: AppDeps) {
       txHash: anchor.txHash,
       signerAddress: anchor.signerAddress,
       mode: anchor.mode,
+      // SECURITY S3: the event fires for every mode; these fields say what actually happened.
+      simulated: simulatedAnchor,
+      reportedOnChainByWallet: onChain,
+      serverVerifiedOnChain: false,
     });
     res.status(201).json({ anchor });
   });
@@ -2131,9 +2161,9 @@ export function createApp(deps: AppDeps) {
         endpoint: `${TESTNET_GRPC_HOST}:${TESTNET_GRPC_PORT}`,
         reachable: false,
         latencyMs: Date.now() - start,
-        mode: 'sandbox-deterministic-fallback',
+        mode: 'unreachable',
         checkedAt: new Date().toISOString(),
-        detail: `Testnet gRPC 暂不可达 (${err instanceof Error ? err.message : 'Network error'})；本地确定性引擎运行中。`,
+        detail: `Testnet gRPC 暂不可达 (${err instanceof Error ? err.message : 'Network error'})；未读取到链上状态。`,
       });
     }
   });

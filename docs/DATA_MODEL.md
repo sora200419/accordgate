@@ -36,9 +36,9 @@ erDiagram
 - Audit entries are append-only; each `prevHash` equals the previous `entryHash`; verification must detect any edit.
 - A revoked agent never passes the gateway; revoking a parent with `cascadeRevoke` revokes every descendant.
 - `dailySpentPlt` never exceeds `dailyLimitPlt`; one call never exceeds `perCallLimitPlt` or the policy's `maxPerCallPlt`.
-- An invoice is settled at most once, and only after a real (or explicitly simulated) payment.
+- An invoice is settled at most once, and only after a real (or explicitly simulated) payment. Today every invoice is `simulated: true` and its `txHash` starts with `sim_`.
 - Private keys are never returned by any API or written to logs.
-- An anchor's `mode` always tells the truth: `simulated-payload` is never shown as on-chain.
+- An anchor's `mode` always tells the truth: `simulated-payload` is never shown as on-chain. Only `browser-wallet-tx` gets a CCDScan link and the audit decision `ONCHAIN_ANCHORED`; the other modes get `ANCHOR_NOT_ONCHAIN`. A `simulated-payload` anchor has `signerAddress: null`.
 
 ## Ownership and access
 See the role and permission table in `docs/SECURITY.md`.

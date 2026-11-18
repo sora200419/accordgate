@@ -223,7 +223,7 @@ export const api = {
   getAnchors: () => requestJson<{ anchors: OnchainAnchorRecord[] }>('/api/anchors'),
 
   createAnchor: (payload: {
-    signerAddress: string;
+    signerAddress: string | null;
     txHash: string;
     mode: OnchainAnchorRecord['mode'];
   }) =>

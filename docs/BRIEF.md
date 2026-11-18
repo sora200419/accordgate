@@ -20,7 +20,7 @@ TODO (not set yet)
 ## Acceptance criteria
 - [ ] The app installs and builds from a clean clone
 - [ ] Core path steps 1–5 work in the deployed app
-- [ ] Every simulated result is labelled as simulated
+- [x] Every simulated result is labelled as simulated (S3, 2026-11-18)
 - [ ] TODO
 
 ## Out of scope (not doing)

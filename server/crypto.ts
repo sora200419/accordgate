@@ -72,6 +72,10 @@ export function computeAuditEntryHash(entry: Omit<AuditEntry, 'entryHash'>): str
   return sha256Hex(canonicalJson(entry));
 }
 
-export function generateMockTxHash(seed: string): string {
-  return '0xccd_' + sha256Hex(seed + ':' + Date.now().toString()).slice(0, 56);
+/**
+ * SECURITY S3: a stand-in for a transaction hash when nothing was sent to the chain.
+ * The `sim_` prefix (never `0x`) keeps it from passing as a real Concordium hash.
+ */
+export function generateSimulatedTxHash(seed: string): string {
+  return 'sim_' + sha256Hex(seed + ':' + Date.now().toString()).slice(0, 56);
 }
