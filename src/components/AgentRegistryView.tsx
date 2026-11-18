@@ -15,6 +15,9 @@ import {
 import { api } from '../api';
 import type { AgentRecord, AgentStatus, ExternalChain, VcdcDnsCheckResult } from '../types';
 import { AgentStatusText } from './StatusBadge';
+import { SimulatedBadge } from './SimulatedBadge';
+
+const REGISTRY_SIMULATED_REASON = 'Agent 只登记在本地注册表，没有写入 CIS-8004 / CIS-8 合约';
 
 interface AgentRegistryViewProps {
   agents: AgentRecord[];
@@ -168,7 +171,7 @@ export function AgentRegistryView({
           className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-700 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-800 whitespace-nowrap shrink-0"
         >
           <Plus className="h-3.5 w-3.5" />
-          <span>注册 CIS-8004 Agent</span>
+          <span>登记 Agent（本地，模拟 CIS-8004）</span>
         </button>
       </div>
 
@@ -176,18 +179,19 @@ export function AgentRegistryView({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         <section className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 xl:col-span-7">
           <div className="border-b border-slate-200 px-5 py-3.5 dark:border-slate-800">
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Verified by Concordium 注册目录 ({filteredAgents.length})
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <span>本地 Agent 注册目录 ({filteredAgents.length})</span>
+              <SimulatedBadge reason={REGISTRY_SIMULATED_REASON} />
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              CIS-8004 身份卡片与 CIS-8 跨链密钥绑定 · 点击任意行查看密码学摘要
+              CIS-8004 格式的身份卡片与 CIS-8 跨链密钥绑定（均未上链）· 点击任意行查看密码学摘要
             </p>
           </div>
 
           {filteredAgents.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
               <p className="text-sm font-medium text-slate-900 dark:text-slate-100">未找到匹配的 Agent 记录</p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">尝试调整筛选状态或新建 CIS-8004 Agent</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">尝试调整筛选状态或登记新 Agent</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -335,7 +339,10 @@ export function AgentRegistryView({
                   </dd>
                 </div>
                 <div className="flex items-start justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400 shrink-0">链上注册合约</dt>
+                  <dt className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 shrink-0">
+                    <span>目标合约（本地登记，未写入链上）</span>
+                    <SimulatedBadge reason={REGISTRY_SIMULATED_REASON} />
+                  </dt>
                   <dd className="text-right font-mono text-slate-700 dark:text-slate-300">
                     {selectedAgent.registryContract} · {selectedAgent.keyRegistryContract}
                   </dd>
@@ -390,7 +397,8 @@ export function AgentRegistryView({
               <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
                   <KeyRound className="h-3.5 w-3.5 text-blue-700 dark:text-blue-400" />
-                  <span>CIS-8 跨链外部密钥绑定</span>
+                  <span>CIS-8 跨链外部密钥绑定（未在链上验证）</span>
+                  <SimulatedBadge reason="地址只是登记时填写的值，没有在 CIS-8 合约或外部链上验证" />
                 </div>
                 <div className="space-y-2">
                   {selectedAgent.externalKeys.map((binding) => (
@@ -482,10 +490,10 @@ export function AgentRegistryView({
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800">
               <div>
                 <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  注册新 Verified by Concordium Agent
+                  登记新 Agent（本地，模拟 CIS-8004）
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  自动签发 Ed25519 密钥对、did:ccd 身份与 SHA-256 Agent Card 承诺
+                  自动签发 Ed25519 密钥对、did:ccd 身份与 SHA-256 Agent Card 承诺；只保存在本地，不写入 CIS-8004 合约
                 </p>
               </div>
               <button
@@ -658,7 +666,7 @@ export function AgentRegistryView({
                   className="inline-flex items-center gap-1.5 rounded-md bg-blue-700 px-4 py-2 font-medium text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  <span>{submitting ? '正在签发 did:ccd...' : '提交至 CIS-8004 注册表'}</span>
+                  <span>{submitting ? '正在签发 did:ccd...' : '登记到本地注册表'}</span>
                 </button>
               </div>
             </form>

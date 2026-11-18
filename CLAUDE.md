@@ -21,7 +21,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Dev server (Express + Vite middleware): `npm run dev`
 - Typecheck: `npm run lint` (runs `tsc --noEmit`)
 - Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)
-- Test: `npm test` (`tsx --test server/auth.test.ts server/agentFreshness.test.ts scripts/check-doc-packages.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
+- Test: `npm test` (`tsx --test server/auth.test.ts server/agentFreshness.test.ts src/anchorDisplay.test.ts scripts/check-doc-packages.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
 - Docs package check (F-001): `npm run check:docs` — backticked lower-case package names (scoped, or in `package-lock.json`) in README, CLAUDE.md and `docs/` must be direct dependencies (or listed in `ALLOWED` in `scripts/check-doc-packages.ts` with a reason)
 - Owner sign-in needs `OWNER_ACCOUNTS` (testnet addresses) in `.env`; owner-only routes are `OWNER_ROUTES` in `server/auth.ts`
 - Build: `npm run build`
@@ -42,7 +42,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 
 ## Conventions
 - API errors: the demo uses `{ "error": "message" }`; new code keeps that shape until a slice changes it on purpose.
-- Anything simulated (mock tx hashes, `simulated-payload` anchors, hash-based "ZKP" commitments, x402 settlement) must be labelled as simulated in the UI and README.
+- Anything simulated (`sim_` tx hashes, `simulated-payload` anchors, hash-based "ZKP" commitments, x402 settlement, CIS-3 sponsorship, local CIS-8004 registration) must be labelled as simulated in the UI (`src/components/SimulatedBadge.tsx`), API responses and README.
 - Test data and test accounts live in the seed (`server/store.ts` default state); never paste passwords in chat.
 - Tests use a fixed clock or non-expiring data, never the real date.
 - Logs never contain secrets, private keys, tokens, auth headers or personal data (emails, display names); sanitise third-party errors before logging or returning them.
@@ -57,6 +57,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - `server.ts` — `createApp()` with all API routes (`/api/...`) and gateway logic; `startServer()` adds Vite/static and listens (only when run directly)
 - `server/auth.ts` — wallet sign-in (challenge/verify/me/logout), sessions, `OWNER_ROUTES` guard; `server/auth.test.ts`
 - `server/agentFreshness.ts` — agent request freshness (timestamp window, single-use nonce per DID, in memory); `server/agentFreshness.test.ts`
+- `src/components/SimulatedBadge.tsx` — the 模拟 badge; `src/anchorDisplay.ts` — which anchors get a CCDScan link and their labels; `src/anchorDisplay.test.ts`
 - `server/store.ts` — JSON-file database (`ACCORDGATE_DB_PATH` overrides the path), seed data; `server/crypto.ts` — hashing, Ed25519, mock tx hash; `server/types.ts`
 - `src/App.tsx` — shell, Google sign-in; `src/components/*View.tsx` — one view per tab; `src/api.ts` — fetch wrapper
 - `src/services/concordiumWallet.ts` — browser wallet connect, sign, RegisterData anchor (with fallbacks)

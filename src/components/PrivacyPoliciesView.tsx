@@ -7,6 +7,7 @@ import type {
   WebhookDeliveryLog,
   WebhookEventType,
 } from '../types';
+import { SimulatedBadge } from './SimulatedBadge';
 
 interface PrivacyPoliciesViewProps {
   policies: GatePolicy[];
@@ -169,7 +170,7 @@ export function PrivacyPoliciesView({
             <div>
               <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">受保护的 MCP 工具与 REST 端点</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                基于零知识证明断言、QPM 限流与熔断阈值进行访问门控，服务端不存储个人隐私数据
+                基于调用方自报属性（模拟 ZKP，非零知识证明）、QPM 限流与熔断阈值进行访问门控；只保存判定结果与 SHA-256 承诺
               </p>
             </div>
             <button
@@ -235,8 +236,9 @@ export function PrivacyPoliciesView({
 
               {/* ZKP Predicate Matrix */}
               <div className="space-y-4">
-                <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                  1. ZKP 零知识证明属性门控（Verify Once, Reveal Nothing）
+                <h4 className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  <span>1. ZKP 属性门控（自报属性 + SHA-256 承诺，非零知识证明）</span>
+                  <SimulatedBadge reason="自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）" />
                 </h4>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -396,11 +398,12 @@ export function PrivacyPoliciesView({
                   <div className="flex items-start gap-3">
                     <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                     <div className="text-xs">
-                      <div className="font-medium text-slate-900 dark:text-slate-100">
-                        启用 CIS-3 赞助交易 (Sponsored Gas)
+                      <div className="flex items-center gap-1.5 font-medium text-slate-900 dark:text-slate-100">
+                        <span>启用 CIS-3 赞助交易 (Sponsored Gas)</span>
+                        <SimulatedBadge reason="当前为模拟：开启不会发送 CIS-3 交易" />
                       </div>
                       <div className="mt-0.5 text-slate-500 dark:text-slate-400">
-                        由 x402 Facilitator 替 Agent 代付底层 CCD 手续费，Agent 无需持有原生 Gas 代币
+                        当前为模拟，开启不会发送 CIS-3 交易（设计目标：由 x402 Facilitator 替 Agent 代付 CCD 手续费）
                       </div>
                     </div>
                   </div>

@@ -24,7 +24,9 @@ const DB_PATH = process.env.ACCORDGATE_DB_PATH
   : path.resolve(process.cwd(), 'data', 'gateway-state.json');
 const DATA_DIR = path.dirname(DB_PATH);
 
-export const SPONSOR_FACILITATOR_ACCOUNT = '3xK9qM7vP2L8nR4wT6yB1cD5fG8hJ0kL2mN4pQ9sSponsor';
+// SECURITY S3: CIS-3 gas sponsorship is simulated, so there is no sponsor account; this literal is
+// deliberately not an address.
+export const SIMULATED_SPONSOR = 'simulated-sponsor';
 
 function makeSeedAgent(params: {
   id: string;
@@ -123,7 +125,7 @@ function createInitialDatabase(): GatewayDatabase {
       delegationDepth: 0,
       cascadeRevoke: true,
       consecutiveViolations: 0,
-      walletAddress: '4B7x...EuroTreasury88',
+      walletAddress: null,
       createdAt: iso(0),
     }),
     makeSeedAgent({
@@ -310,13 +312,14 @@ function createInitialDatabase(): GatewayDatabase {
         endpointPath: '/api/mcp/eu-sanctions-screen',
         amountPlt: 0.5,
         asset: 'EURt',
-        sponsorAccount: SPONSOR_FACILITATOR_ACCOUNT,
+        sponsorAccount: SIMULATED_SPONSOR,
         gasFeeCcd: 0.0124,
         gasPaidByAgent: 0,
         status: 'settled',
-        txHash: '0xccd_9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e',
+        txHash: 'sim_9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e',
         createdAt: iso(60),
         settledAt: iso(60),
+        simulated: true,
       },
       {
         invoiceId: 'x402-inv-seed-002',
@@ -324,13 +327,14 @@ function createInitialDatabase(): GatewayDatabase {
         endpointPath: '/api/rest/age-gated-research',
         amountPlt: 0.25,
         asset: 'EURt',
-        sponsorAccount: SPONSOR_FACILITATOR_ACCOUNT,
+        sponsorAccount: SIMULATED_SPONSOR,
         gasFeeCcd: 0.0118,
         gasPaidByAgent: 0,
         status: 'settled',
-        txHash: '0xccd_1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5',
+        txHash: 'sim_1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5',
         createdAt: iso(90),
         settledAt: iso(90),
+        simulated: true,
       },
     ],
     auditLogs: [],
@@ -359,7 +363,8 @@ function createInitialDatabase(): GatewayDatabase {
       endpointPath: '/api/mcp/internal-audit-sync',
       protocol: 'GOVERNANCE',
       decision: 'AGENT_REGISTERED',
-      reason: 'Registered on CIS-8004 (10082:0) with Ed25519 keypair, CIS-8 EVM/Base keys, and VCDC domain binding.',
+      reason:
+        '[seed demo data] Registered in the local registry (not written to CIS-8004 10082:0) with Ed25519 keypair, CIS-8 EVM/Base key bindings (not verified on chain) and VCDC domain.',
       zkp: { principalVerified: true, ageThresholdMet: true, jurisdictionMatched: true, vcdcMatched: true },
       receiptId: null,
       amountPlt: 0,
@@ -371,7 +376,8 @@ function createInitialDatabase(): GatewayDatabase {
       endpointPath: '/api/mcp/eu-sanctions-screen',
       protocol: 'MCP',
       decision: 'ALLOWED',
-      reason: 'CIS-8004 active · Ed25519 verified · ZKP predicates verified (EU, 18+) · x402 settled with CIS-3 sponsored gas.',
+      reason:
+        '[seed demo data] Local registry active · Ed25519 verified · self-reported EU, 18+ (simulated ZKP, SHA-256 commitment) · x402 settlement simulated (no CIS-3 transaction).',
       zkp: { principalVerified: true, ageThresholdMet: true, jurisdictionMatched: true, vcdcMatched: true },
       receiptId: 'x402-inv-seed-001',
       amountPlt: 0.5,
@@ -383,7 +389,7 @@ function createInitialDatabase(): GatewayDatabase {
       endpointPath: '/api/mcp/treasury-settlement',
       protocol: 'MCP',
       decision: 'BLOCKED_REVOKED',
-      reason: 'AgentGate rejected request: agent status is REVOKED in CIS-8004 registry.',
+      reason: '[seed demo data] AgentGate rejected request: agent status is REVOKED in the local registry.',
       zkp: { principalVerified: false, ageThresholdMet: false, jurisdictionMatched: false, vcdcMatched: false },
       receiptId: null,
       amountPlt: 0,
@@ -395,7 +401,8 @@ function createInitialDatabase(): GatewayDatabase {
       endpointPath: '/api/rest/age-gated-research',
       protocol: 'REST',
       decision: 'ALLOWED',
-      reason: 'Delegated sub-agent verified · Ed25519 verified · ZKP jurisdiction & age verified · x402 settled 0.25 EURt.',
+      reason:
+        '[seed demo data] Delegated sub-agent (local registry) · Ed25519 verified · self-reported jurisdiction & age (simulated ZKP) · x402 settlement simulated, 0.25 EURt.',
       zkp: { principalVerified: true, ageThresholdMet: true, jurisdictionMatched: true, vcdcMatched: true },
       receiptId: 'x402-inv-seed-002',
       amountPlt: 0.25,
@@ -407,7 +414,7 @@ function createInitialDatabase(): GatewayDatabase {
       endpointPath: '/api/mcp/treasury-settlement',
       protocol: 'MCP',
       decision: 'GOVERNANCE_CIRCUIT_OPENED',
-      reason: 'Circuit breaker auto-suspended agent after 3 consecutive policy violations.',
+      reason: '[seed demo data] Circuit breaker auto-suspended agent after 3 consecutive policy violations.',
       zkp: { principalVerified: true, ageThresholdMet: false, jurisdictionMatched: true, vcdcMatched: true },
       receiptId: null,
       amountPlt: 0,

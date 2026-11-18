@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock, Copy, Play, ServerCog, Terminal, Wallet } from 'lucide-react';
 import { api } from '../api';
-import type { AgentRecord, GatePolicy, SandboxProbeResponse, X402Invoice } from '../types';
+import type { AgentRecord, GatePolicy, PipelineStepTrace, SandboxProbeResponse, X402Invoice } from '../types';
+import { SimulatedBadge } from './SimulatedBadge';
+
+// SECURITY S3: pipeline steps whose result is simulated, with the reason shown on the badge.
+const SIMULATED_STEP_REASON: Partial<Record<PipelineStepTrace['key'], string>> = {
+  agentgate: '只查本地注册表，未查询 CIS-8004 合约',
+  zkp: '自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）',
+  x402: '模拟结算：无真实付款，未发送 CIS-3 赞助交易',
+};
+const X402_SIMULATED_REASON = SIMULATED_STEP_REASON.x402 as string;
 
 interface ProtocolSandboxViewProps {
   agents: AgentRecord[];
@@ -166,7 +175,7 @@ export function ProtocolSandboxView({
     setSettling(true);
     try {
       const { invoice } = await api.settleX402Invoice(result.invoice.invoiceId);
-      onNotify(`x402 发票已通过 CIS-3 赞助结算（Agent 支付 0 CCD Gas）`);
+      onNotify('x402 发票已模拟结算（未上链，无真实转账，未发送 CIS-3 交易）');
       await runProbe(invoice.invoiceId);
     } finally {
       setSettling(false);
@@ -250,7 +259,7 @@ export function ProtocolSandboxView({
     try {
       const { invoice } = await api.settleX402Invoice(mcpChallengedInvoice.invoiceId);
       setMcpReceiptId(invoice.invoiceId);
-      onNotify(`MCP x402 发票已结算 (${invoice.invoiceId})，正在重放 tools/call`);
+      onNotify(`MCP x402 发票已模拟结算 (${invoice.invoiceId}，未上链)，正在重放 tools/call`);
       await runMcpRpc(invoice.invoiceId);
     } finally {
       setSettling(false);
@@ -320,7 +329,7 @@ async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) 
     : '';
 
   const pythonSdkSnippet = selectedAgent && selectedPolicy
-    ? `# AccordGate Python Client SDK (httpx + x402 CIS-3 Settlement)
+    ? `# AccordGate Python Client SDK (httpx + x402; settlement simulated in this demo)
 import httpx
 
 GATEWAY = "${window.location.origin}"
@@ -429,7 +438,7 @@ with httpx.Client() as client:
                   协议交互沙盒请求构造器
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  向 Express 合规中间件发起真实请求，验证 AgentGate、Ed25519 签名、ZKP、限额与 x402
+                  向 Express 合规中间件发起真实请求：本地注册表、Ed25519 签名、自报属性（模拟 ZKP）、限额与 x402（模拟结算）
                 </p>
               </div>
 
@@ -494,7 +503,7 @@ with httpx.Client() as client:
           <div className="space-y-4 border-t border-slate-200 pt-4 text-xs dark:border-slate-800">
             <div>
               <label className="mb-1 block font-medium text-slate-700 dark:text-slate-300">
-                发起调用的 Agent (CIS-8004)
+                发起调用的 Agent（本地注册表）
               </label>
               <select
                 value={selectedAgent?.did ?? ''}
@@ -529,7 +538,7 @@ with httpx.Client() as client:
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block font-medium text-slate-700 dark:text-slate-300">
-                  ZKP 声明管辖区
+                  自报管辖区（模拟 ZKP）
                 </label>
                 <select
                   value={jurisdictionClaim}
@@ -546,7 +555,7 @@ with httpx.Client() as client:
               </div>
               <div>
                 <label className="mb-1 block font-medium text-slate-700 dark:text-slate-300">
-                  ZKP 主体年龄证明
+                  自报年龄（模拟 ZKP，非证明）
                 </label>
                 <input
                   type="number"
@@ -581,7 +590,7 @@ with httpx.Client() as client:
                     onChange={(e) => setPrincipalVerifiedClaim(e.target.checked)}
                     className="h-3.5 w-3.5 accent-blue-700"
                   />
-                  <span>携带 IDP 真人 ZKP</span>
+                  <span>自报已通过 IDP 实名（模拟）</span>
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-slate-700 dark:text-slate-300">
                   <input
@@ -698,7 +707,7 @@ with httpx.Client() as client:
             <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-slate-200 py-16 text-center dark:border-slate-800">
               <p className="text-sm font-medium text-slate-800 dark:text-slate-200">等待发起沙盒请求</p>
               <p className="mt-1 max-w-md text-xs text-slate-500 dark:text-slate-400">
-                沙盒将真实调用 Express 后端的 CIS-8004 注册校验、ZKP 隐私门控、限额检查、x402 HTTP 402 账单挑战与 EU AI Act 哈希链入库。
+                沙盒会真实调用 Express 后端：本地注册表校验、Ed25519 验签、自报属性门控（模拟 ZKP）、限额检查、x402 HTTP 402 账单（模拟结算）与 EU AI Act 哈希链入库。
               </p>
             </div>
           ) : (
@@ -716,8 +725,11 @@ with httpx.Client() as client:
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                        {String(index + 1).padStart(2, '0')}. {step.title}
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                        <span>
+                          {String(index + 1).padStart(2, '0')}. {step.title}
+                        </span>
+                        {SIMULATED_STEP_REASON[step.key] && <SimulatedBadge reason={SIMULATED_STEP_REASON[step.key] as string} />}
                       </span>
                       <span className="font-mono text-[11px] uppercase text-slate-500 dark:text-slate-400">
                         {step.status}
@@ -736,11 +748,11 @@ with httpx.Client() as client:
                       <div className="flex items-center gap-1.5 font-semibold text-amber-900 dark:text-amber-200">
                         <Wallet className="h-4 w-4" />
                         <span>收到 HTTP 402 Payment Required 账单 ({result.invoice.invoiceId})</span>
+                        <SimulatedBadge reason={X402_SIMULATED_REASON} />
                       </div>
                       <p className="text-amber-800 dark:text-amber-300">
                         需支付 <span className="font-mono font-semibold">{result.invoice.amountPlt.toFixed(2)} EURt</span> ·{' '}
-                        CIS-3 Sponsor ({result.invoice.sponsorAccount.slice(0, 12)}...) 代付 {result.invoice.gasFeeCcd} CCD Gas，Agent 实付 Gas ={' '}
-                        <span className="font-mono font-semibold">0 CCD</span>
+                        模拟结算：不会真实扣款，也不会发送 CIS-3 赞助交易（Gas {result.invoice.gasFeeCcd} CCD 为估算值）
                       </p>
                     </div>
                     <button
@@ -749,7 +761,7 @@ with httpx.Client() as client:
                       onClick={handleSettleAndRetry}
                       className="rounded-md bg-amber-700 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-amber-800 disabled:opacity-60 whitespace-nowrap shrink-0"
                     >
-                      {settling ? 'CIS-3 结算重试中...' : '1-Click Verify & Pay 并重试'}
+                      {settling ? '模拟结算重试中...' : '模拟支付并重试'}
                     </button>
                   </div>
                 </div>
@@ -764,9 +776,10 @@ with httpx.Client() as client:
                   <div className="mt-2 grid grid-cols-1 gap-2 font-mono text-[11px] text-emerald-800 sm:grid-cols-2 dark:text-emerald-300">
                     <div>Principal: {result.toolResponse.accountablePrincipal}</div>
                     <div>PII Stored on Gateway: {String(result.toolResponse.piiStoredOnGateway)}</div>
-                    <div>ZKP Commitment: {result.toolResponse.zkpCommitment.slice(0, 22)}...</div>
-                    <div>
-                      x402 Receipt: {result.toolResponse.x402Receipt?.invoiceId ?? 'Zero-Fee Endpoint'}
+                    <div>SHA-256 承诺（模拟 ZKP）: {result.toolResponse.zkpCommitment.slice(0, 22)}...</div>
+                    <div className="flex items-center gap-1.5">
+                      <span>x402 Receipt: {result.toolResponse.x402Receipt?.invoiceId ?? 'Zero-Fee Endpoint'}</span>
+                      {result.toolResponse.x402Receipt && <SimulatedBadge reason={X402_SIMULATED_REASON} />}
                     </div>
                   </div>
                 </div>
@@ -965,11 +978,12 @@ with httpx.Client() as client:
                       <div className="flex items-center gap-1.5 font-semibold text-amber-900 dark:text-amber-200">
                         <Wallet className="h-4 w-4" />
                         <span>JSON-RPC -32002: x402 Payment Required ({mcpChallengedInvoice.invoiceId})</span>
+                        <SimulatedBadge reason={X402_SIMULATED_REASON} />
                       </div>
                       <p className="text-amber-800 dark:text-amber-300">
                         MCP 工具调用前需支付{' '}
                         <span className="font-mono font-semibold">{mcpChallengedInvoice.amountPlt.toFixed(2)} EURt</span>
-                        （CIS-3 Sponsor 代付 Gas）
+                        （模拟结算，不扣款，不发送 CIS-3 赞助交易）
                       </p>
                     </div>
                     <button
@@ -978,7 +992,7 @@ with httpx.Client() as client:
                       onClick={handleSettleMcpAndRetry}
                       className="rounded-md bg-amber-700 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-amber-800 disabled:opacity-60 whitespace-nowrap shrink-0"
                     >
-                      {settling ? '结算重放中...' : 'CIS-3 结算并重放 tools/call'}
+                      {settling ? '模拟结算重放中...' : '模拟结算并重放 tools/call'}
                     </button>
                   </div>
                 </div>

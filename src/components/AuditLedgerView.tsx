@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import type { AuditEntry, ChainVerifyResult, OnchainAnchorRecord } from '../types';
 import { AuditDecisionText } from './StatusBadge';
+import { SimulatedBadge } from './SimulatedBadge';
+import { anchorExplorerUrl, anchorModeLabel } from '../anchorDisplay';
+
+const ZKP_SIMULATED_REASON = '自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）';
 
 interface AuditLedgerViewProps {
   logs: AuditEntry[];
@@ -209,8 +213,9 @@ export function AuditLedgerView({
                 : `检测到哈希链断裂，异常序号 #${chainStatus.brokenAtSeq}（已触发防篡改警报）`}
             </span>
           </div>
-          <span className="text-slate-500 dark:text-slate-400">
-            Zero-PII 合规保障：所有记录仅保留 ZKP 布尔断言与 Commitment 摘要
+          <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+            <span>记录仅保留属性判定布尔值与 SHA-256 承诺（自报属性，非零知识证明）</span>
+            <SimulatedBadge reason={ZKP_SIMULATED_REASON} />
           </span>
         </div>
       )}
@@ -229,7 +234,9 @@ export function AuditLedgerView({
                   <th className="px-3 py-3 font-medium">Agent</th>
                   <th className="px-3 py-3 font-medium">端点 / 协议</th>
                   <th className="px-3 py-3 font-medium">决策结果</th>
-                  <th className="px-3 py-3 font-medium">ZKP & PII</th>
+                  <th className="px-3 py-3 font-medium" title={ZKP_SIMULATED_REASON}>
+                    ZKP（模拟）& PII
+                  </th>
                   <th className="px-3 py-3 text-right font-medium">金额 (PLT)</th>
                   <th className="px-5 py-3 text-right font-medium">Entry Hash</th>
                 </tr>
@@ -279,16 +286,16 @@ export function AuditLedgerView({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5 dark:border-slate-800">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Concordium Testnet 链上存证锚点记录 ({onchainAnchors.length})
+              Concordium Testnet 存证锚点记录 ({onchainAnchors.length})
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              通过 Browser Wallet (`RegisterData` / `signMessage`) 将最新 EU AI Act 哈希链根指纹永久存证
+              只有「链上 RegisterData」一行是钱包发出的交易（服务器未核验）；签名摘要和模拟锚定都没有上链
             </p>
           </div>
         </div>
         {onchainAnchors.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
-            点击上方“锚定根哈希至 Testnet”按钮即可生成第一条链上合规存证记录
+            点击上方“锚定根哈希至 Testnet”生成第一条存证记录（未连接钱包时只生成模拟记录，不上链）
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -303,7 +310,9 @@ export function AuditLedgerView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {onchainAnchors.map((anchor) => (
+                {onchainAnchors.map((anchor) => {
+                  const explorerUrl = anchorExplorerUrl(anchor);
+                  return (
                   <tr key={anchor.id}>
                     <td className="px-5 py-2.5 font-mono text-slate-700 dark:text-slate-200">
                       {anchor.auditRange} ({anchor.totalEntries} 条)
@@ -313,26 +322,41 @@ export function AuditLedgerView({
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300">
-                        {anchor.signerAddress.slice(0, 14)}...
+                        {anchor.signerAddress ? `${anchor.signerAddress.slice(0, 14)}...` : '—（无签名）'}
                       </div>
-                      <div className="text-[10px] text-slate-500">{anchor.mode}</div>
+                      <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500">
+                        <span>{anchorModeLabel(anchor.mode)}</span>
+                        {anchor.mode !== 'browser-wallet-tx' && (
+                          <SimulatedBadge
+                            label={anchor.mode === 'simulated-payload' ? '模拟' : '未上链'}
+                            reason={anchorModeLabel(anchor.mode)}
+                          />
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-[11px]">
-                      <a
-                        href={`https://testnet.ccdscan.io/transactions?d=${anchor.txHash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-400"
-                      >
-                        <span>{anchor.txHash.slice(0, 14)}...</span>
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
+                      {explorerUrl ? (
+                        <a
+                          href={explorerUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-400"
+                        >
+                          <span>{anchor.txHash.slice(0, 14)}...</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : (
+                        <span className="text-slate-500" title="不是交易哈希，链上查不到">
+                          {anchor.txHash.slice(0, 14)}...
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-2.5 text-right font-mono text-[11px] text-slate-500 tabular-nums">
                       {anchor.createdAt.replace('T', ' ').slice(0, 19)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -377,7 +401,10 @@ export function AuditLedgerView({
                   </dd>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">ZKP Commitment</dt>
+                  <dt className="flex items-center gap-1 text-slate-500">
+                    <span>SHA-256 承诺（模拟 ZKP）</span>
+                    <SimulatedBadge reason={ZKP_SIMULATED_REASON} />
+                  </dt>
                   <dd className="break-all text-right font-mono text-slate-900 dark:text-slate-100">
                     {selectedEntry.zkpClaims.zkpCommitment}
                   </dd>

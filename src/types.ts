@@ -20,7 +20,8 @@ export type AuditDecision =
   | 'GOVERNANCE_REACTIVATED'
   | 'AGENT_REGISTERED'
   | 'POLICY_UPDATED'
-  | 'ONCHAIN_ANCHORED';
+  | 'ONCHAIN_ANCHORED'
+  | 'ANCHOR_NOT_ONCHAIN';
 
 export interface ExternalKeyBinding {
   chain: ExternalChain;
@@ -112,6 +113,8 @@ export interface X402Invoice {
   txHash: string | null;
   createdAt: string;
   settledAt: string | null;
+  /** SECURITY S3: settlement and gas sponsorship are simulated (older state files may lack the field). */
+  simulated?: true;
 }
 
 export interface ZkpVerificationSummary {
@@ -178,7 +181,9 @@ export interface OnchainAnchorRecord {
   rootHash: string;
   auditRange: string;
   totalEntries: number;
-  signerAddress: string;
+  /** null when nothing was signed (simulated-payload). */
+  signerAddress: string | null;
+  /** A transaction hash only for browser-wallet-tx (reported by the wallet, not checked by the server). */
   txHash: string;
   network: 'testnet' | 'mainnet';
   mode: 'browser-wallet-tx' | 'wallet-signed-attestation' | 'simulated-payload';
@@ -229,6 +234,7 @@ export interface SandboxProbeResponse {
       txHash: string | null;
       amountPlt: number;
       gasPaidByAgentCcd: number;
+      simulated: true;
     } | null;
     resultSummary: string;
   };

@@ -13,7 +13,8 @@ Verified on Node 22.15 / npm 11.3 (2026-11-18). Only start-up is checked so far,
 - Owner sign-in with the Concordium Browser Wallet (sidebar button 用 Concordium 钱包登录（所有者）): the server sends a one-time challenge, the wallet signs it, and the server checks the signature against the account's keys read from Concordium testnet (`server/auth.ts`). Only accounts listed in `OWNER_ACCOUNTS` can sign in. The session is an HttpOnly cookie that lasts 8 hours and is kept in server memory, so a server restart signs everyone out.
 - Every owner route that changes data (agents, policies, webhooks, anchors, x402 settle, sandbox probe/sign/reset, audit tamper demo) needs a signed-in owner, whatever the path's letter case; the list is `OWNER_ROUTES` in `server/auth.ts`. Reads stay public. `GET /api/webhooks` shows only the last 4 characters of each signing secret; the full secret is returned once, when the webhook is created.
 - `/api/gateway/invoke` and MCP `tools/call` reject requests without `X-Agent-Signature`, `X-Agent-Timestamp` and `X-Agent-Nonce` (401). The agent signs `did|endpointPath|timestamp|nonce|cardHash` with Ed25519. The timestamp must be at most 120 s old and at most 30 s ahead, and each nonce works once per agent within that window; a replayed or stale request is blocked (403) and audited (`server/agentFreshness.ts`). The server signs with an agent's stored demo key only for the owner's sandbox (`/api/sandbox/probe`, `/api/sandbox/sign`). A request with a wrong signature or card hash is blocked and audited, but outside the owner's sandbox it does not count toward the circuit breaker, so strangers cannot suspend an agent.
-- `npm test` runs `server/auth.test.ts` (sign-in, replay, expiry, owner routes, agent signatures, agent request freshness), `server/agentFreshness.test.ts` (nonce store) and the docs package check tests, without network access.
+- Every simulated result carries a 模拟 badge in the UI and says so in API responses and audit text (SECURITY S3): x402 settlement hashes start with `sim_` and invoices have `simulated: true`; anchors made without a wallet have no signer and no CCDScan link; MCP `initialize` returns a `simulated` list.
+- `npm test` runs `server/auth.test.ts` (sign-in, replay, expiry, owner routes, agent signatures, agent request freshness, simulated labels), `server/agentFreshness.test.ts` (nonce store), `src/anchorDisplay.test.ts` (which anchors get a CCDScan link) and the docs package check tests, without network access.
 - `npm run check:docs` checks backticked lower-case package names in README, CLAUDE.md and `docs/` (scoped names, or names in `package-lock.json`): it fails when one is not a direct dependency, or when a line calls a direct dependency "not in package.json". Unscoped names that are not installed, upper-case names and names with a version inside the backticks are not checked.
 
 ## Run it
@@ -43,7 +44,13 @@ Firebase (Google sign-in plus Firestore sync) is optional. To turn it on, set `V
 - On the dev machine, local security software (probably the same AVG Web Shield) also rewrites HTTP responses for paths ending in `/mcp`, so browsers and `fetch` fail on `/api/mcp` even on localhost. Seen with a plain Python server too; not caused by this app.
 - `firebase` 13 declares `node >=24.12` in its package metadata, so `npm ci` prints engine warnings on Node 22. Firebase runs only in the browser bundle here, so the server is not affected.
 - The client bundle is one ~970 kB chunk (Vite warns about size).
-- Some results are simulated, not on-chain: x402 settlement produces a mock transaction hash; audit anchoring falls back to a simulated payload when no wallet is connected; the "ZKP" commitment is a SHA-256 hash, not a zero-knowledge proof.
+- Simulated, not on chain (each is marked 模拟 in the UI):
+  - x402 settlement: no payment is made; the "transaction hash" is a `sim_…` placeholder.
+  - CIS-3 gas sponsorship: no sponsored transaction is sent; the gas figure is an estimate.
+  - Agent registration and CIS-8 key bindings: kept in the local registry only, never written to or read from the CIS-8004 / CIS-8 contracts.
+  - "ZKP": age, jurisdiction and KYC are self-reported request headers; the gateway stores a SHA-256 commitment of the results. No zero-knowledge proof is checked.
+  - Audit anchoring: without a wallet the anchor is simulated (no signer, no link). If the wallet only signs, the row is a signature digest, not a transaction. A RegisterData transaction hash is the wallet's report; the server does not look it up on chain.
+- A state file created before S3 still holds old `0xccd_…` seed hashes, invoices without `simulated`, and simulated anchors recorded as `ONCHAIN_ANCHORED`; reset with `POST /api/sandbox/reset` (owner) or delete `data/gateway-state.json`.
 - Demo state (including agent private keys) is kept in a local JSON file, `data/gateway-state.json`.
 
 Details and status of each item: `docs/SECURITY.md`.
