@@ -23,7 +23,7 @@ Chore — CI and docs cleanup after S1. Branch `chore/ci-and-docs`.
 - [x] `npm run lint`, `npm test`, `npm run check:docs` (0 problems), `npm run build` (no `__dirname` warning)
 - [x] Check proven to catch F-001: an injected "`firebase` … not in package.json" line and a missing `ALLOWED` entry each fail
 - [x] `harness-review` passed (1 round; R1 claim wording fixed, R3 noted in header, R2 not adopted per scope, R4 → check CI log for the summary line)
-- [ ] CI green on the PR
+- [x] CI green on PR #2 (GitHub Actions run 44291817506, 31/31 tests, Docs packages step printed "6 files, 0 problem(s)", 2026-11-18)
 
 ## Next slices
 1. S7 — agent request freshness (timestamp window + nonce)
