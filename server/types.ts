@@ -8,6 +8,8 @@ export type AuditDecision =
   | 'BLOCKED_REVOKED'
   | 'BLOCKED_CARD_TAMPERED'
   | 'BLOCKED_SIGNATURE_INVALID'
+  | 'BLOCKED_STALE_REQUEST'
+  | 'BLOCKED_REPLAYED'
   | 'BLOCKED_RATE_LIMITED'
   | 'BLOCKED_ZKP_FAILED'
   | 'BLOCKED_SPENDING_LIMIT'
@@ -197,6 +199,7 @@ export interface SandboxClaimInput {
   simulateRateLimitSpike?: boolean;
   providedSignatureHex?: string | null;
   providedTimestamp?: string | null;
+  providedNonce?: string | null;
   /** Only the owner-only sandbox probe may let the server sign with the agent's stored key. */
   allowServerSigning?: boolean;
   requestedTransferPlt?: number;
@@ -205,7 +208,7 @@ export interface SandboxClaimInput {
 
 export interface PipelineStepTrace {
   step: number;
-  key: 'agentgate' | 'signature' | 'ratelimit' | 'zkp' | 'guardrail' | 'x402' | 'audit';
+  key: 'agentgate' | 'signature' | 'freshness' | 'ratelimit' | 'zkp' | 'guardrail' | 'x402' | 'audit';
   title: string;
   status: 'passed' | 'failed' | 'challenged' | 'skipped';
   detail: string;

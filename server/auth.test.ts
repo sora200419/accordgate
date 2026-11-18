@@ -53,8 +53,8 @@ type CreateApp = typeof import('../server.ts').createApp;
 let createApp: CreateApp;
 let resetDatabase: () => unknown;
 
-async function startApp(ownerAccounts: string[]) {
-  const app = createApp({ ownerAccounts, getAccountInfo: fakeLookup, now: () => clock });
+async function startApp(ownerAccounts: string[], extra: { agentNoncePerAgentCap?: number } = {}) {
+  const app = createApp({ ownerAccounts, getAccountInfo: fakeLookup, now: () => clock, ...extra });
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -422,7 +422,7 @@ describe('agent requests must carry their own signature', () => {
 
   test('a forged signature fails the signature step', async () => {
     const res = await call(ctx.base, 'POST', '/api/gateway/invoke', {
-      headers: agentHeaders({ 'X-Agent-Signature': '00'.repeat(64), 'X-Agent-Timestamp': new Date(clock).toISOString() }),
+      headers: agentHeaders({ 'X-Agent-Signature': '00'.repeat(64), 'X-Agent-Timestamp': new Date(clock).toISOString(), 'X-Agent-Nonce': crypto.randomUUID() }),
       body: { endpointPath: restEndpoint },
     });
     const sigStep = res.json.traces?.find((t: any) => t.key === 'signature');
@@ -434,14 +434,14 @@ describe('agent requests must carry their own signature', () => {
     const beforeViolations = beforeList.json.agents.find((a: any) => a.did === agent.did).consecutiveViolations ?? 0;
     for (let i = 0; i < 5; i++) {
       await call(ctx.base, 'POST', '/api/gateway/invoke', {
-        headers: agentHeaders({ 'X-Agent-Signature': '00'.repeat(64), 'X-Agent-Timestamp': new Date(clock).toISOString() }),
+        headers: agentHeaders({ 'X-Agent-Signature': '00'.repeat(64), 'X-Agent-Timestamp': new Date(clock).toISOString(), 'X-Agent-Nonce': crypto.randomUUID() }),
         body: { endpointPath: restEndpoint },
       });
       await call(ctx.base, 'POST', '/api/gateway/invoke', {
         headers: agentHeaders({
           'X-Agent-Card-Hash': 'tampered_0000000000000000',
           'X-Agent-Signature': '00'.repeat(64),
-          'X-Agent-Timestamp': new Date(clock).toISOString(),
+          'X-Agent-Timestamp': new Date(clock).toISOString(), 'X-Agent-Nonce': crypto.randomUUID(),
         }),
         body: { endpointPath: restEndpoint },
       });
@@ -460,7 +460,11 @@ describe('agent requests must carry their own signature', () => {
     });
     assert.equal(signed.status, 200);
     const res = await call(ctx.base, 'POST', '/api/gateway/invoke', {
-      headers: agentHeaders({ 'X-Agent-Signature': signed.json.signatureHex, 'X-Agent-Timestamp': signed.json.timestamp }),
+      headers: agentHeaders({
+        'X-Agent-Signature': signed.json.signatureHex,
+        'X-Agent-Timestamp': signed.json.timestamp,
+        'X-Agent-Nonce': signed.json.nonce,
+      }),
       body: { endpointPath: restEndpoint },
     });
     assert.equal(res.json.traces?.find((t: any) => t.key === 'signature')?.status, 'passed');
@@ -470,7 +474,11 @@ describe('agent requests must carry their own signature', () => {
       body: { agentDid: agent.did, endpointPath: `/api/mcp/${mcpTool}` },
     });
     const mcp = await call(ctx.base, 'POST', '/api/mcp', {
-      headers: agentHeaders({ 'X-Agent-Signature': mcpSigned.json.signatureHex, 'X-Agent-Timestamp': mcpSigned.json.timestamp }),
+      headers: agentHeaders({
+        'X-Agent-Signature': mcpSigned.json.signatureHex,
+        'X-Agent-Timestamp': mcpSigned.json.timestamp,
+        'X-Agent-Nonce': mcpSigned.json.nonce,
+      }),
       body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: mcpTool, arguments: {} } },
     });
     const traces = mcp.json.result?.accordGateTrace ?? mcp.json.error?.data?.traces;
@@ -484,5 +492,214 @@ describe('agent requests must carry their own signature', () => {
       body: { agentDid: agent.did, endpointPath: restEndpoint, jurisdictionClaim: 'EU', ageClaim: 30, principalVerifiedClaim: true },
     });
     assert.equal(res.json.traces?.find((t: any) => t.key === 'signature')?.status, 'passed');
+  });
+});
+
+describe('S7: agent request freshness (timestamp window + single-use nonce)', () => {
+  // Signs locally with the agent's seeded key, like a real agent would (no server help).
+  const restEndpoint = '/api/rest/age-gated-research';
+  const mcpTool = 'eu-sanctions-screen';
+  const mcpEndpoint = `/api/mcp/${mcpTool}`;
+  type SeedAgent = { did: string; cardHash: string; pem: string };
+  let agents: SeedAgent[];
+
+  async function loadAgents(): Promise<SeedAgent[]> {
+    const { loadDatabase } = await import('./store.ts');
+    const db = loadDatabase();
+    const active = db.agents.filter((a) => a.status === 'active' && db.proverKeys[a.did]);
+    assert.ok(active.length >= 2, 'seed has two active agents with keys');
+    return active.map((a) => ({ did: a.did, cardHash: a.cardHash, pem: db.proverKeys[a.did] }));
+  }
+
+  async function signedHeaders(a: SeedAgent, endpointPath: string, tsMs = clock, nonce: string = crypto.randomUUID()) {
+    const { signAgentRequest } = await import('./crypto.ts');
+    const timestamp = new Date(tsMs).toISOString();
+    return {
+      'X-Concordium-Agent-DID': a.did,
+      'X-Agent-Card-Hash': a.cardHash,
+      'X-Agent-Timestamp': timestamp,
+      'X-Agent-Nonce': nonce,
+      'X-Agent-Signature': signAgentRequest(a.pem, `${a.did}|${endpointPath}|${timestamp}|${nonce}|${a.cardHash}`),
+    };
+  }
+
+  const invoke = (base: string, headers: Record<string, string>) =>
+    call(base, 'POST', '/api/gateway/invoke', { headers, body: { endpointPath: restEndpoint } });
+  const mcpCall = (base: string, headers: Record<string, string>) =>
+    call(base, 'POST', '/api/mcp', {
+      headers,
+      body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpTool, arguments: {} } },
+    });
+  const step = (res: { json: any }, key: string) => {
+    const traces = res.json?.traces ?? res.json?.result?.accordGateTrace ?? res.json?.error?.data?.traces;
+    return traces?.find((t: any) => t.key === key);
+  };
+  const outcome = (res: { json: any }) => res.json?.outcome ?? res.json?.error?.data?.outcome;
+
+  describe('default cap', () => {
+    let ctx: Awaited<ReturnType<typeof startApp>>;
+    before(async () => {
+      clock = FIXED_START;
+      ctx = await startApp([owner.base58]);
+    });
+    after(() => ctx.server.close());
+    beforeEach(async () => {
+      agents = await loadAgents();
+    });
+
+    test('a missing X-Agent-Nonce is 401 on REST and MCP', async () => {
+      const h: Record<string, string> = await signedHeaders(agents[0], restEndpoint);
+      delete h['X-Agent-Nonce'];
+      assert.equal((await invoke(ctx.base, h)).status, 401);
+      const m: Record<string, string> = await signedHeaders(agents[0], mcpEndpoint);
+      delete m['X-Agent-Nonce'];
+      assert.equal((await mcpCall(ctx.base, m)).status, 401);
+    });
+
+    test('replay of the same signed request is blocked (REST and MCP)', async () => {
+      const h = await signedHeaders(agents[0], restEndpoint);
+      const first = await invoke(ctx.base, h);
+      assert.equal(step(first, 'freshness')?.status, 'passed', JSON.stringify(first.json));
+      const replay = await invoke(ctx.base, h);
+      assert.equal(replay.status, 403);
+      assert.equal(replay.json.outcome, 'BLOCKED_REPLAYED');
+      assert.equal(step(replay, 'freshness')?.status, 'failed');
+
+      const m = await signedHeaders(agents[0], mcpEndpoint);
+      assert.equal(step(await mcpCall(ctx.base, m), 'freshness')?.status, 'passed');
+      const mReplay = await mcpCall(ctx.base, m);
+      assert.equal(mReplay.status, 403);
+      assert.equal(outcome(mReplay), 'BLOCKED_REPLAYED');
+
+      // REST headers replayed against MCP: the signed string names the endpoint, so the signature fails.
+      const cross = await mcpCall(ctx.base, h);
+      assert.equal(step(cross, 'signature')?.status, 'failed');
+    });
+
+    test('a stale timestamp is blocked; one at the window edge passes', async () => {
+      clock = FIXED_START + 10 * 60_000;
+      const edge = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint, clock - 120_000));
+      assert.equal(step(edge, 'freshness')?.status, 'passed', JSON.stringify(edge.json));
+      const stale = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint, clock - 120_001));
+      assert.equal(stale.status, 403);
+      assert.equal(stale.json.outcome, 'BLOCKED_STALE_REQUEST');
+      assert.equal(stale.json.traces.find((t: any) => t.key === 'freshness')?.metadata?.reason, 'stale');
+    });
+
+    test('a captured request replayed after the window is blocked as stale', async () => {
+      const h = await signedHeaders(agents[0], restEndpoint);
+      assert.equal(step(await invoke(ctx.base, h), 'freshness')?.status, 'passed');
+      clock += 120_001;
+      const late = await invoke(ctx.base, h);
+      assert.equal(late.json.outcome, 'BLOCKED_STALE_REQUEST');
+    });
+
+    test('a future timestamp beyond 30 s is blocked; 30 s ahead passes', async () => {
+      const ok = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint, clock + 30_000));
+      assert.equal(step(ok, 'freshness')?.status, 'passed', JSON.stringify(ok.json));
+      const future = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint, clock + 30_001));
+      assert.equal(future.status, 403);
+      assert.equal(future.json.outcome, 'BLOCKED_STALE_REQUEST');
+      assert.equal(future.json.traces.find((t: any) => t.key === 'freshness')?.metadata?.reason, 'future');
+    });
+
+    test('20 concurrent copies of one signed request: exactly one passes', async () => {
+      const h = await signedHeaders(agents[0], restEndpoint);
+      const results = await Promise.all(Array.from({ length: 20 }, () => invoke(ctx.base, h)));
+      const passed = results.filter((r) => step(r, 'freshness')?.status === 'passed');
+      const replayed = results.filter((r) => r.json.outcome === 'BLOCKED_REPLAYED');
+      assert.equal(passed.length, 1);
+      assert.equal(replayed.length, 19);
+    });
+
+    test('out-of-order arrival inside the window: newer then older both pass', async () => {
+      clock = FIXED_START + 60_000;
+      const older = await signedHeaders(agents[0], restEndpoint, clock - 20_000);
+      const newer = await signedHeaders(agents[0], restEndpoint, clock - 5_000);
+      assert.equal(step(await invoke(ctx.base, newer), 'freshness')?.status, 'passed');
+      assert.equal(step(await invoke(ctx.base, older), 'freshness')?.status, 'passed');
+      assert.equal((await invoke(ctx.base, newer)).json.outcome, 'BLOCKED_REPLAYED');
+      assert.equal((await invoke(ctx.base, older)).json.outcome, 'BLOCKED_REPLAYED');
+    });
+
+    test('replayed and stale requests do not count toward the circuit breaker', async () => {
+      const h = await signedHeaders(agents[0], restEndpoint);
+      await invoke(ctx.base, h);
+      for (let i = 0; i < 5; i++) await invoke(ctx.base, h);
+      for (let i = 0; i < 5; i++) await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint, clock + 60_000));
+      const list = await call(ctx.base, 'GET', '/api/agents');
+      const a = list.json.agents.find((x: any) => x.did === agents[0].did);
+      assert.equal(a.status, 'active');
+      assert.equal(a.consecutiveViolations ?? 0, 0);
+    });
+
+    test('owner sandbox sign + probe still pass the freshness step', async () => {
+      const cookie = await signIn(ctx.base);
+      const signed = await call(ctx.base, 'POST', '/api/sandbox/sign', {
+        cookie,
+        body: { agentDid: agents[0].did, endpointPath: restEndpoint },
+      });
+      assert.equal(signed.json.timestamp, new Date(clock).toISOString(), 'sandbox/sign uses the injected clock');
+      const res = await invoke(ctx.base, {
+        'X-Concordium-Agent-DID': agents[0].did,
+        'X-Agent-Card-Hash': agents[0].cardHash,
+        'X-Agent-Signature': signed.json.signatureHex,
+        'X-Agent-Timestamp': signed.json.timestamp,
+        'X-Agent-Nonce': signed.json.nonce,
+      });
+      assert.equal(step(res, 'freshness')?.status, 'passed', JSON.stringify(res.json));
+      for (let i = 0; i < 2; i++) {
+        const probe = await call(ctx.base, 'POST', '/api/sandbox/probe', {
+          cookie,
+          body: { agentDid: agents[0].did, endpointPath: restEndpoint, jurisdictionClaim: 'EU', ageClaim: 30, principalVerifiedClaim: true },
+        });
+        assert.equal(step(probe, 'freshness')?.status, 'passed', 'each probe gets a fresh nonce');
+      }
+    });
+  });
+
+  describe('flooding the nonce store', () => {
+    const CAP = 5;
+    const floodDids = new Set<string>();
+    let ctx: Awaited<ReturnType<typeof startApp>>;
+    before(async () => {
+      clock = FIXED_START;
+      ctx = await startApp([owner.base58], { agentNoncePerAgentCap: CAP });
+    });
+    after(() => ctx.server.close());
+    beforeEach(async () => {
+      agents = await loadAgents();
+    });
+
+    test('anonymous forged requests with random nonces add nothing: the agent still has its full quota', async () => {
+      floodDids.add(agents[0].did);
+      for (let i = 0; i < 300; i++) {
+        const h = await signedHeaders(agents[0], restEndpoint);
+        h['X-Agent-Signature'] = '00'.repeat(64);
+        const r = await invoke(ctx.base, h);
+        assert.equal(step(r, 'signature')?.status, 'failed');
+      }
+      for (let i = 0; i < CAP; i++) {
+        const r = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint));
+        assert.equal(step(r, 'freshness')?.status, 'passed', `valid request ${i} after the flood`);
+      }
+    });
+
+    test('an agent that fills its cap gets 429; another agent is unaffected', async () => {
+      // Both flood tests share one guard; isolation relies on resetDatabase() minting new DIDs per test.
+      assert.ok(!floodDids.has(agents[0].did), 'agent DIDs differ from the previous flood test');
+      for (let i = 0; i < CAP; i++) {
+        assert.equal(step(await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint)), 'freshness')?.status, 'passed');
+      }
+      const over = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint));
+      assert.equal(over.status, 429);
+      assert.equal(over.json.traces.find((t: any) => t.key === 'freshness')?.metadata?.reason, 'too-many');
+      const other = await invoke(ctx.base, await signedHeaders(agents[1], restEndpoint));
+      assert.equal(step(other, 'freshness')?.status, 'passed', JSON.stringify(other.json));
+      // After the window the full agent recovers.
+      clock += 120_001;
+      const later = await invoke(ctx.base, await signedHeaders(agents[0], restEndpoint));
+      assert.equal(step(later, 'freshness')?.status, 'passed');
+    });
   });
 });

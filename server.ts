@@ -10,6 +10,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { AccountNotFoundError, createAuth, parseOwnerAccounts } from './server/auth.ts';
 import type { AccountInfoLookup } from './server/auth.ts';
+import { createAgentReplayGuard, DEFAULT_PER_AGENT_CAP } from './server/agentFreshness.ts';
+import type { AgentReplayGuard } from './server/agentFreshness.ts';
 import {
   computeAgentCardHash,
   generateMockTxHash,
@@ -203,7 +205,21 @@ function recordPolicyViolationAndCheckCircuitBreaker(
   }
 }
 
-function evaluateCompliancePipeline(input: SandboxClaimInput) {
+interface PipelineContext {
+  replayGuard: AgentReplayGuard;
+  now: () => number;
+}
+
+/** Random nonce for requests the server signs itself (owner sandbox). */
+function newAgentNonce() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function agentSigningPayload(did: string, endpointPath: string, timestamp: string, nonce: string, cardHash: string) {
+  return `${did}|${endpointPath}|${timestamp}|${nonce}|${cardHash}`;
+}
+
+function evaluateCompliancePipeline(input: SandboxClaimInput, ctx: PipelineContext) {
   const db = loadDatabase();
   const requestId = 'req-' + crypto.randomUUID().slice(0, 12);
   const policy = db.policies.find((p) => p.endpointPath === input.endpointPath);
@@ -439,10 +455,12 @@ function evaluateCompliancePipeline(input: SandboxClaimInput) {
   });
 
   // Step 2: Ed25519 Cryptographic Request Signature Verification
-  const timestamp = input.providedTimestamp || new Date().toISOString();
-  const signingPayload = `${agent.did}|${policy.endpointPath}|${timestamp}|${canonicalDigest}`;
+  const serverSigns = !input.providedSignatureHex && Boolean(input.allowServerSigning);
+  const timestamp = input.providedTimestamp || new Date(ctx.now()).toISOString();
+  const nonce = input.providedNonce || (serverSigns ? newAgentNonce() : '');
+  const signingPayload = agentSigningPayload(agent.did, policy.endpointPath, timestamp, nonce, canonicalDigest);
   let signatureHex = input.providedSignatureHex || '';
-  if (!signatureHex && input.allowServerSigning) {
+  if (serverSigns) {
     const privateKeyPem = db.proverKeys?.[agent.did];
     signatureHex = privateKeyPem ? signAgentRequest(privateKeyPem, signingPayload) : '';
   }
@@ -511,6 +529,72 @@ function evaluateCompliancePipeline(input: SandboxClaimInput) {
     status: 'passed',
     detail: `Verified Ed25519 signature (${signatureHex.slice(0, 14)}...) against registered SPKI public key.`,
     metadata: { signatureHex: signatureHex.slice(0, 24) + '...', timestamp },
+  });
+
+  // Step 2b (S7): freshness window + single-use nonce. Runs only after the signature is valid, so
+  // only the agent's key holder can add nonces. Synchronous check-and-record: no await in between.
+  const freshness = ctx.replayGuard.check(agent.did, timestamp, nonce);
+  if (!freshness.ok) {
+    const replayed = freshness.reason === 'replayed';
+    const tooMany = freshness.reason === 'too-many';
+    const decision = tooMany ? 'BLOCKED_RATE_LIMITED' : replayed ? 'BLOCKED_REPLAYED' : 'BLOCKED_STALE_REQUEST';
+    const httpStatus = tooMany ? 429 : 403;
+    const gateStatus = tooMany ? 'too-many-nonces' : replayed ? 'replayed-nonce' : 'stale-timestamp';
+    traces.push({
+      step: 2,
+      key: 'freshness',
+      title: 'Request Freshness (timestamp window + nonce)',
+      status: 'failed',
+      detail: freshness.detail,
+      metadata: { reason: freshness.reason, timestamp },
+    });
+    const audit = appendAuditEntryToDb(db, {
+      requestId,
+      agentDid: agent.did,
+      agentName: agent.name,
+      endpointPath: policy.endpointPath,
+      protocol: policy.protocol,
+      decision,
+      reason: `Request freshness check failed (${freshness.reason}): ${freshness.detail}`,
+      zkpClaims: {
+        principalVerified: false,
+        ageThresholdMet: false,
+        jurisdictionMatched: false,
+        vcdcMatched: false,
+        zkpCommitment: generateZkpCommitment({
+          agentDid: agent.did,
+          endpointPath: policy.endpointPath,
+          principalVerified: false,
+          ageThresholdMet: false,
+          jurisdictionMatched: false,
+          vcdcMatched: false,
+          nonce: requestId,
+        }),
+        piiStored: false as const,
+      },
+      x402ReceiptId: null,
+      amountPlt: 0,
+    });
+    // A replayed or stale request does not prove the agent misbehaved, so it never counts
+    // toward the circuit breaker.
+    saveDatabase(db);
+    return {
+      httpStatus,
+      outcome: decision,
+      requestId,
+      traces,
+      audit,
+      headers: { 'X-AgentGate-Status': gateStatus } as Record<string, string>,
+    };
+  }
+
+  traces.push({
+    step: 2,
+    key: 'freshness',
+    title: 'Request Freshness (timestamp window + nonce)',
+    status: 'passed',
+    detail: `Timestamp inside the window and nonce used for the first time.`,
+    metadata: { timestamp },
   });
 
   // Step 3: Sliding-Window Rate Limiter & Circuit Breaker Check
@@ -957,6 +1041,8 @@ export interface AppDeps {
   getAccountInfo: AccountInfoLookup;
   now?: () => number;
   secureCookie?: boolean;
+  /** Max unexpired nonces per agent (S7); tests set it low. */
+  agentNoncePerAgentCap?: number;
 }
 
 /** Builds the Express app with all /api routes (no Vite, no listen) so tests can run it. */
@@ -968,6 +1054,13 @@ export function createApp(deps: AppDeps) {
   app.use(express.json());
 
   loadDatabase();
+
+  const now = deps.now ?? (() => Date.now());
+  // S7: per-process nonce store for agent requests (single instance only, like auth sessions).
+  const pipelineCtx: PipelineContext = {
+    now,
+    replayGuard: createAgentReplayGuard({ now, perAgentCap: deps.agentNoncePerAgentCap ?? DEFAULT_PER_AGENT_CAP }),
+  };
 
   const auth = createAuth(deps);
   app.use(auth.router);
@@ -1462,7 +1555,7 @@ export function createApp(deps: AppDeps) {
       paymentReceiptId: body.paymentReceiptId ?? null,
       // Owner-only sandbox: the server may sign as the agent to demo the pipeline.
       allowServerSigning: true,
-    });
+    }, pipelineCtx);
 
     Object.entries(result.headers).forEach(([k, v]) => res.setHeader(k, v));
     res.status(result.httpStatus).json(result);
@@ -1487,9 +1580,10 @@ export function createApp(deps: AppDeps) {
       res.status(409).json({ error: 'No server-held key for this agent; it must sign its own requests.' });
       return;
     }
-    const timestamp = new Date().toISOString();
-    const signingPayload = `${agent.did}|${endpointPath}|${timestamp}|${computeAgentCardHash(agent.agentCard)}`;
-    res.json({ timestamp, signatureHex: signAgentRequest(privateKeyPem, signingPayload) });
+    const timestamp = new Date(now()).toISOString();
+    const nonce = newAgentNonce();
+    const signingPayload = agentSigningPayload(agent.did, endpointPath, timestamp, nonce, computeAgentCardHash(agent.agentCard));
+    res.json({ timestamp, nonce, signatureHex: signAgentRequest(privateKeyPem, signingPayload) });
   });
 
   app.post('/api/x402/settle', (req, res) => {
@@ -1519,6 +1613,7 @@ export function createApp(deps: AppDeps) {
     const cardHashHeader = req.header('X-Agent-Card-Hash') || '';
     const signatureHeader = req.header('X-Agent-Signature') || null;
     const timestampHeader = req.header('X-Agent-Timestamp') || null;
+    const nonceHeader = req.header('X-Agent-Nonce') || null;
     const jurisdictionClaim = req.header('X-ZKP-Jurisdiction') || 'EU';
     const ageClaim = Number(req.header('X-ZKP-Age') || '25');
     const paymentReceiptId = req.header('X-Payment-Receipt') || null;
@@ -1529,8 +1624,10 @@ export function createApp(deps: AppDeps) {
       res.status(401).json({ error: 'Missing X-Concordium-Agent-DID header.' });
       return;
     }
-    if (!signatureHeader || !timestampHeader) {
-      res.status(401).json({ error: 'Missing X-Agent-Signature or X-Agent-Timestamp header; agents must sign each request.' });
+    if (!signatureHeader || !timestampHeader || !nonceHeader) {
+      res.status(401).json({
+        error: 'Missing X-Agent-Signature, X-Agent-Timestamp or X-Agent-Nonce header; agents must sign each request.',
+      });
       return;
     }
 
@@ -1547,9 +1644,10 @@ export function createApp(deps: AppDeps) {
       simulateTamperedCard,
       providedSignatureHex: signatureHeader,
       providedTimestamp: timestampHeader,
+      providedNonce: nonceHeader,
       requestedTransferPlt,
       paymentReceiptId,
-    });
+    }, pipelineCtx);
 
     Object.entries(result.headers).forEach(([k, v]) => res.setHeader(k, v));
     res.status(result.httpStatus).json(result);
@@ -1638,13 +1736,14 @@ export function createApp(deps: AppDeps) {
       const cardHashHeader = req.header('X-Agent-Card-Hash') || '';
       const signatureHeader = req.header('X-Agent-Signature') || null;
       const timestampHeader = req.header('X-Agent-Timestamp') || null;
-      if (!agentDid || !signatureHeader || !timestampHeader) {
+      const nonceHeader = req.header('X-Agent-Nonce') || null;
+      if (!agentDid || !signatureHeader || !timestampHeader || !nonceHeader) {
         res.status(401).json({
           jsonrpc: '2.0',
           id: rpcId,
           error: {
             code: -32001,
-            message: 'tools/call needs X-Concordium-Agent-DID, X-Agent-Signature and X-Agent-Timestamp headers.',
+            message: 'tools/call needs X-Concordium-Agent-DID, X-Agent-Signature, X-Agent-Timestamp and X-Agent-Nonce headers.',
           },
         });
         return;
@@ -1665,9 +1764,10 @@ export function createApp(deps: AppDeps) {
         simulateTamperedCard,
         providedSignatureHex: signatureHeader,
         providedTimestamp: timestampHeader,
+        providedNonce: nonceHeader,
         requestedTransferPlt: Number(args.requestedTransferPlt ?? 0),
         paymentReceiptId,
-      });
+      }, pipelineCtx);
 
       Object.entries(pipelineResult.headers).forEach(([k, v]) => res.setHeader(k, v));
 
