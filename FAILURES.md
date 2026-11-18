@@ -27,5 +27,6 @@ Mishaps that forced rework, with the rule each one produced. Newest at the botto
 - **What happened**: The MCP tests failed with "terminated". Software on this PC rewrites loopback HTTP responses for any path ending in `/mcp`: it adds `transfer-encoding: chunked` and drops Content-Length. A plain Python server shows the same thing, and the rewrite happens even outside the sandbox. Diagnosis took about 10 tool calls.
 - **Root cause**: missing information about this machine's environment.
 - **Fix**: `server/auth.test.ts` sends `/api/mcp` calls through a raw-socket client and reads until the connection closes. The cause is documented in README "Known limitations".
+- **Later finding (2026-11-18)**: the first real wallet sign-in failed with "unable to verify the first certificate". `openssl s_client` against `grpc.testnet.concordium.com:20000` showed the certificate issued by "AVG Web/Mail Shield Root", so AVG Web Shield re-signs TLS on this PC. It is probably also what rewrites the `/mcp` responses (not confirmed). Starting the server with `NODE_OPTIONS=--use-system-ca` fixed sign-in.
 - **Rule destination**: project CLAUDE.md.
 - **Recurrences**: none.

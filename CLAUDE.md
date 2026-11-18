@@ -67,6 +67,6 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Never present a simulated chain or payment result as real.
 
 # Mishaps and Prevention Rules
-- **[2026-11-18] `/mcp` responses are rewritten on the dev machine**: When a local HTTP call to a path ending in `/mcp` fails with "terminated" or a chunk-size parse error, use the raw-socket client in `server/auth.test.ts`; local software on this PC rewrites those responses, so don't debug the app first. (F-004)
+- **[2026-11-18] AVG on the dev machine rewrites traffic**: When a local `/mcp` call fails with "terminated", use the raw-socket client in `server/auth.test.ts` instead of debugging the app. When testnet TLS fails with "unable to verify the first certificate", run the server with `NODE_OPTIONS=--use-system-ca`, never with TLS checks off. (F-004)
 - **[2026-11-18] Limits on unauthenticated sign-in endpoints must not displace the owner**: When capping or evicting state that anonymous callers can create (challenges, pending requests), test "owner first, flood after, owner completes". Prefer stateless signed tokens over stored state that can be evicted. (F-003)
 <!-- Project-specific lessons from harness-postmortem. One rule, at most 2 sentences, with date and source. -->
