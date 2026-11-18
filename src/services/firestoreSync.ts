@@ -9,8 +9,9 @@ import {
   setDoc,
   updateDoc,
   where,
+  type Firestore,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db as firestoreDb, handleFirestoreError, OperationType } from '../firebase';
 import type {
   AgentRecord,
   AuditEntry,
@@ -18,6 +19,13 @@ import type {
   OnchainAnchorRecord,
   WebhookConfig,
 } from '../types';
+
+function getDb(): Firestore {
+  if (!firestoreDb) {
+    throw new Error('Firebase not configured: set VITE_FIREBASE_* env vars to enable Firestore sync');
+  }
+  return firestoreDb;
+}
 
 function sanitizeId(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -49,7 +57,7 @@ export async function ensureUserWorkspace(user: User): Promise<string> {
     throw new Error('请使用已验证邮箱的 Google 账号登录以启用 Firestore 云端持久化');
   }
   const userPath = `users/${user.uid}`;
-  const userRef = doc(db, 'users', user.uid);
+  const userRef = doc(getDb(), 'users', user.uid);
   try {
     const userSnap = await getDoc(userRef);
     const profileBase: Record<string, unknown> = {
@@ -80,7 +88,7 @@ export async function ensureUserWorkspace(user: User): Promise<string> {
 
   const workspaceId = getWorkspaceId(user.uid);
   const wsPath = `workspaces/${workspaceId}`;
-  const wsRef = doc(db, 'workspaces', workspaceId);
+  const wsRef = doc(getDb(), 'workspaces', workspaceId);
   try {
     const wsSnap = await getDoc(wsRef);
     if (!wsSnap.exists()) {
@@ -117,7 +125,7 @@ export async function syncWorkspaceToFirestore(
   let existingAgentIds = new Set<string>();
   try {
     const existingAgentsSnap = await getDocs(
-      query(collection(db, 'workspaces', workspaceId, 'agents'), where('ownerUid', '==', ownerUid)),
+      query(collection(getDb(), 'workspaces', workspaceId, 'agents'), where('ownerUid', '==', ownerUid)),
     );
     existingAgentIds = new Set(existingAgentsSnap.docs.map((d) => d.id));
   } catch (err) {
@@ -126,7 +134,7 @@ export async function syncWorkspaceToFirestore(
 
   for (const agent of snapshot.agents) {
     const agentId = sanitizeId(agent.id);
-    const agentRef = doc(db, 'workspaces', workspaceId, 'agents', agentId);
+    const agentRef = doc(getDb(), 'workspaces', workspaceId, 'agents', agentId);
     const path = `${agentsColPath}/${agentId}`;
     try {
       if (!existingAgentIds.has(agentId)) {
@@ -176,7 +184,7 @@ export async function syncWorkspaceToFirestore(
   let existingPolicyIds = new Set<string>();
   try {
     const existingPoliciesSnap = await getDocs(
-      query(collection(db, 'workspaces', workspaceId, 'policies'), where('ownerUid', '==', ownerUid)),
+      query(collection(getDb(), 'workspaces', workspaceId, 'policies'), where('ownerUid', '==', ownerUid)),
     );
     existingPolicyIds = new Set(existingPoliciesSnap.docs.map((d) => d.id));
   } catch (err) {
@@ -185,7 +193,7 @@ export async function syncWorkspaceToFirestore(
 
   for (const policy of snapshot.policies) {
     const policyId = sanitizeId(policy.id);
-    const policyRef = doc(db, 'workspaces', workspaceId, 'policies', policyId);
+    const policyRef = doc(getDb(), 'workspaces', workspaceId, 'policies', policyId);
     const path = `${policiesColPath}/${policyId}`;
     try {
       const rateLimitQpm = Math.min(10000, Math.max(1, Math.trunc(policy.rateLimitQpm || 20)));
@@ -235,7 +243,7 @@ export async function syncWorkspaceToFirestore(
   let existingAuditIds = new Set<string>();
   try {
     const existingAuditsSnap = await getDocs(
-      query(collection(db, 'workspaces', workspaceId, 'auditLogs'), where('ownerUid', '==', ownerUid)),
+      query(collection(getDb(), 'workspaces', workspaceId, 'auditLogs'), where('ownerUid', '==', ownerUid)),
     );
     existingAuditIds = new Set(existingAuditsSnap.docs.map((d) => d.id));
   } catch (err) {
@@ -245,7 +253,7 @@ export async function syncWorkspaceToFirestore(
   for (const entry of snapshot.auditLogs.slice(0, 60)) {
     const auditId = sanitizeId(`aud_${entry.seq}`);
     if (existingAuditIds.has(auditId)) continue;
-    const auditRef = doc(db, 'workspaces', workspaceId, 'auditLogs', auditId);
+    const auditRef = doc(getDb(), 'workspaces', workspaceId, 'auditLogs', auditId);
     const path = `${auditColPath}/${auditId}`;
     try {
       await setDoc(auditRef, {
@@ -278,7 +286,7 @@ export async function syncWorkspaceToFirestore(
   let existingWhIds = new Set<string>();
   try {
     const existingWhSnap = await getDocs(
-      query(collection(db, 'workspaces', workspaceId, 'webhookConfigs'), where('ownerUid', '==', ownerUid)),
+      query(collection(getDb(), 'workspaces', workspaceId, 'webhookConfigs'), where('ownerUid', '==', ownerUid)),
     );
     existingWhIds = new Set(existingWhSnap.docs.map((d) => d.id));
   } catch (err) {
@@ -287,7 +295,7 @@ export async function syncWorkspaceToFirestore(
 
   for (const wh of snapshot.webhooks) {
     const whId = sanitizeId(wh.id);
-    const whRef = doc(db, 'workspaces', workspaceId, 'webhookConfigs', whId);
+    const whRef = doc(getDb(), 'workspaces', workspaceId, 'webhookConfigs', whId);
     const path = `${whColPath}/${whId}`;
     const enabledEvents =
       wh.enabledEvents.length > 0 ? wh.enabledEvents.slice(0, 10) : ['circuit_breaker.opened'];
@@ -327,7 +335,7 @@ export async function syncWorkspaceToFirestore(
   let existingAnchorIds = new Set<string>();
   try {
     const existingAnchorsSnap = await getDocs(
-      query(collection(db, 'workspaces', workspaceId, 'onchainAnchors'), where('ownerUid', '==', ownerUid)),
+      query(collection(getDb(), 'workspaces', workspaceId, 'onchainAnchors'), where('ownerUid', '==', ownerUid)),
     );
     existingAnchorIds = new Set(existingAnchorsSnap.docs.map((d) => d.id));
   } catch (err) {
@@ -337,7 +345,7 @@ export async function syncWorkspaceToFirestore(
   for (const anchor of snapshot.anchors) {
     const anchorId = sanitizeId(anchor.id);
     if (existingAnchorIds.has(anchorId)) continue;
-    const anchorRef = doc(db, 'workspaces', workspaceId, 'onchainAnchors', anchorId);
+    const anchorRef = doc(getDb(), 'workspaces', workspaceId, 'onchainAnchors', anchorId);
     const path = `${anchorsColPath}/${anchorId}`;
     try {
       await setDoc(anchorRef, {
@@ -374,14 +382,14 @@ export async function loadWorkspaceSummaryFromFirestore(user: User): Promise<Wor
   const ownerUid = user.uid;
   try {
     const [agentsSnap, policiesSnap, auditsSnap, whSnap, anchorsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'workspaces', workspaceId, 'agents'), where('ownerUid', '==', ownerUid))),
-      getDocs(query(collection(db, 'workspaces', workspaceId, 'policies'), where('ownerUid', '==', ownerUid))),
-      getDocs(query(collection(db, 'workspaces', workspaceId, 'auditLogs'), where('ownerUid', '==', ownerUid))),
+      getDocs(query(collection(getDb(), 'workspaces', workspaceId, 'agents'), where('ownerUid', '==', ownerUid))),
+      getDocs(query(collection(getDb(), 'workspaces', workspaceId, 'policies'), where('ownerUid', '==', ownerUid))),
+      getDocs(query(collection(getDb(), 'workspaces', workspaceId, 'auditLogs'), where('ownerUid', '==', ownerUid))),
       getDocs(
-        query(collection(db, 'workspaces', workspaceId, 'webhookConfigs'), where('ownerUid', '==', ownerUid)),
+        query(collection(getDb(), 'workspaces', workspaceId, 'webhookConfigs'), where('ownerUid', '==', ownerUid)),
       ),
       getDocs(
-        query(collection(db, 'workspaces', workspaceId, 'onchainAnchors'), where('ownerUid', '==', ownerUid)),
+        query(collection(getDb(), 'workspaces', workspaceId, 'onchainAnchors'), where('ownerUid', '==', ownerUid)),
       ),
     ]);
     return {

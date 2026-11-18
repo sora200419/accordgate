@@ -18,13 +18,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # TODO: switch to `npm ci` once a package-lock.json is committed (or to bun if chosen)
       - name: Install
-        run: npm install
+        run: npm ci
       - name: Typecheck
         run: npm run lint
-      - name: Test
-        run: echo "TODO no test runner yet" && exit 1
+      # No test runner yet; it arrives with slice S1 (owner auth on mutating routes).
       - name: Build
         run: npm run build
 

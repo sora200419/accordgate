@@ -1,12 +1,37 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
+import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
 
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+// Firebase is optional. Config comes from VITE_FIREBASE_* env vars, which Vite bundles into
+// the client (Firebase web config is public by design). Never put a real secret behind VITE_.
+const env = import.meta.env;
+const firebaseConfig = {
+  apiKey: env.VITE_FIREBASE_API_KEY,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: env.VITE_FIREBASE_PROJECT_ID,
+  appId: env.VITE_FIREBASE_APP_ID,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+};
+const firestoreDatabaseId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID;
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+/** True only when the required Firebase web config is present; otherwise sign-in and sync are off. */
+export const firebaseEnabled = Boolean(
+  firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId,
+);
+
+const app: FirebaseApp | null = firebaseEnabled
+  ? getApps().length > 0
+    ? getApps()[0]
+    : initializeApp(firebaseConfig)
+  : null;
+
+export const db: Firestore | null = app
+  ? firestoreDatabaseId
+    ? getFirestore(app, firestoreDatabaseId)
+    : getFirestore(app)
+  : null;
+export const auth: Auth | null = app ? getAuth(app) : null;
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -48,13 +73,13 @@ export function handleFirestoreError(
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
+      tenantId: auth?.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData.map((provider) => ({
+        auth?.currentUser?.providerData.map((provider) => ({
           providerId: provider.providerId,
           displayName: provider.displayName,
           email: provider.email,
@@ -71,6 +96,7 @@ export function handleFirestoreError(
 let connectionTested = false;
 
 export async function testFirestoreConnection(): Promise<boolean> {
+  if (!db) return false;
   if (connectionTested) return true;
   connectionTested = true;
   try {

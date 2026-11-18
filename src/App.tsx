@@ -25,7 +25,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { OverviewView } from './components/OverviewView';
 import { PrivacyPoliciesView } from './components/PrivacyPoliciesView';
 import { ProtocolSandboxView } from './components/ProtocolSandboxView';
-import { auth, googleProvider, testFirestoreConnection } from './firebase';
+import { auth, firebaseEnabled, googleProvider, testFirestoreConnection } from './firebase';
 import {
   anchorAuditRootWithWallet,
   connectConcordiumBrowserWallet,
@@ -102,6 +102,7 @@ function AccordGateDashboard() {
   }, [darkMode]);
 
   useEffect(() => {
+    if (!auth) return;
     void testFirestoreConnection();
     const unsub = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
@@ -160,12 +161,13 @@ function AccordGateDashboard() {
       setWebhookDeliveries(webhooksRes.deliveries);
       setOnchainAnchors(anchorsRes.anchors);
 
-      if (auth.currentUser && auth.currentUser.emailVerified) {
+      const cloudUser = auth?.currentUser;
+      if (cloudUser && cloudUser.emailVerified) {
         const allAuditRes =
           auditFilter === 'all' && !auditSearch
             ? auditRes
             : await api.getAuditLogs('all', '');
-        void syncSnapshotToCloud(auth.currentUser, {
+        void syncSnapshotToCloud(cloudUser, {
           agents: agentsRes.agents,
           policies: policiesRes.policies,
           auditLogs: allAuditRes.logs,
@@ -191,6 +193,10 @@ function AccordGateDashboard() {
   }, [auditFilter, auditSearch, loading, refreshAuditOnly]);
 
   async function handleGoogleLogin() {
+    if (!auth) {
+      notify('云端同步未配置（缺少 VITE_FIREBASE_* 环境变量）');
+      return;
+    }
     try {
       const cred = await signInWithPopup(auth, googleProvider);
       notify(`已登录云端合规账号: ${cred.user.email ?? cred.user.displayName ?? 'Verified User'}`);
@@ -201,6 +207,7 @@ function AccordGateDashboard() {
   }
 
   async function handleGoogleLogout() {
+    if (!auth) return;
     await signOut(auth);
     setCloudSummary(null);
     notify('已退出 Google 云端会话（本地服务端沙盒继续运行）');
@@ -408,6 +415,14 @@ function AccordGateDashboard() {
               ? `Firestore 已同步 · ${cloudSummary.agentCount} Agents · ${cloudSummary.auditCount} Logs`
               : 'Firestore 就绪'}
           </div>
+        </div>
+      ) : !firebaseEnabled ? (
+        <div
+          className="flex w-full items-center gap-2.5 rounded-md border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400"
+          title="设置 VITE_FIREBASE_* 环境变量后可启用 Google 登录与 Firestore 同步"
+        >
+          <Cloud className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">云端同步未配置</span>
         </div>
       ) : (
         <button

@@ -6,30 +6,31 @@
 Slice 1 — make the imported demo install, typecheck and build from a clean clone. No behaviour changes.
 Start this in Plan Mode: confirm each item below by running the commands before changing anything.
 
-## Decisions needed from the user first
-- npm or bun (delete the other lockfile)
-- Keep Firebase (sign-in + Firestore sync) or drop it for now? If kept: where `firebase-applet-config.json` comes from (it is git-ignored)
+## Decisions (made 2026-11-18)
+- npm (bun.lock deleted, package-lock.json committed)
+- Firebase optional via `VITE_FIREBASE_*` env vars; off when unset
 
 ## Phase 1: dependencies and config
-- [ ] Run install, `npm run lint`, `npm run build`; record the real errors (`package.json`)
-- [ ] Add missing deps `firebase`, `@concordium/browser-wallet-api-helpers` at versions compatible with `@concordium/web-sdk` ^12 (`package.json`; explain versions and lockfile impact first)
-- [ ] Verify `typescript ^7.0.2` exists and works with `tsc --noEmit`; otherwise pin a released version (`package.json`)
-- [ ] Remove unused `@google/genai` and `GEMINI_API_KEY` if nothing uses them (`package.json`, `.env.example` — ask before editing)
-- [ ] Firebase config: load from env or document `firebase-applet-config.json` (`src/firebase.ts`, `README.md`)
-- [ ] Check `npm start` (`node server.ts`) works on the chosen Node version, or change it to `tsx` (`package.json`)
+- [x] Baseline: `npm install` failed on peer conflict (root `esbuild ^0.25` vs vite 8 peer `^0.27 || ^0.28`); after deps fixed, lint/build failed only on missing `firebase-applet-config.json`
+- [x] Added `firebase ^13.4.0` (declares Node >=24.12; firebase 12 pulls the same `@firebase/app` via peers. User accepted the Node 22 engine warning on 2026-11-18), `@concordium/browser-wallet-api-helpers ^3.3.0`; removed unused `esbuild`, `@google/genai`
+- [x] `typescript 7.0.2` is released and `tsc --noEmit` passes
+- [ ] Remove `GEMINI_API_KEY` from `.env.example` and add `VITE_FIREBASE_*` placeholders (waiting for the user)
+- [x] Firebase config from env (`src/firebase.ts`, `README.md`)
+- [x] `npm start` → `tsx server.ts` (Node 22.15 cannot run .ts without a flag); serves `/` and `/api/agents` with 200
 
 ## Phase 2: frontend and integration
-- [ ] `npm run dev`, open http://localhost:3000, click through all five tabs; note console errors
-- [ ] Update README "What works now" and "Run it" with what was actually verified
+- [x] `npm run dev`: all five tabs render, no browser console errors
+- [x] README "What works now", "Run it", "Configuration" updated
 
 ## Contract
 No API changes in this slice.
 
 ## Verification gate
-- [ ] Typecheck (`npm run lint`)
-- [ ] Build (`npm run build`)
-- [ ] Ran the app by hand, all tabs load
-- [ ] CI green on the branch (add a test runner or drop the placeholder Test step)
+- [x] Typecheck (`npm run lint`)
+- [x] Build (`npm run build`)
+- [x] Ran the app by hand, all tabs load
+- [ ] CI green on the branch (placeholder Test step dropped; needs a push)
+- [ ] `.claude/settings.json` deny rule: `Read(./.env.*)` → specific files (edit blocked for Claude; the user applies it)
 
 ## Next slices (from docs/SECURITY.md)
 1. S1 — require a signed-in owner on every mutating API route

@@ -9,14 +9,15 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 ## Stack
 - Frontend: React 19, Vite 8, Tailwind 4, `motion`, `lucide-react` (`src/`)
 - Backend: Express 4 in `server.ts` (~2000 lines) plus `server/` (store, crypto, types); runs through `tsx`
-- Chain: `@concordium/web-sdk` ^12 (testnet gRPC), `@concordium/browser-wallet-api-helpers` (imported but NOT in package.json yet)
-- Persistence: JSON file `data/gateway-state.json` (server, regenerated if missing, git-ignored); Firebase Firestore + Google sign-in on the client (`firebase` NOT in package.json, `firebase-applet-config.json` missing)
-- Language: TypeScript (`typescript ^7.0.2` in package.json: verify this version exists before relying on it)
-- Package manager: TODO — repo has `bun.lock` but README says npm; pick one and delete the other lockfile
+- Chain: `@concordium/web-sdk` ^12 (testnet gRPC), `@concordium/browser-wallet-api-helpers` ^3.3 (browser wallet)
+- Persistence: JSON file `data/gateway-state.json` (server, regenerated if missing, git-ignored); optional Firebase Firestore + Google sign-in on the client (`firebase` ^13.4; its packages declare Node >=24.12, so npm warns on Node 22: accepted, browser-only), turned on only when `VITE_FIREBASE_*` env vars are set (`src/firebase.ts` `firebaseEnabled`)
+- Language: TypeScript 7 (`typescript ^7.0.2`, verified with `tsc --noEmit`)
+- Package manager: npm (`package-lock.json`; CI uses `npm ci`)
 - Hosting: TODO (the demo ran on AI Studio / Cloud Run)
 
 ## Common Commands
-- Install: `npm install` (TODO: confirm package manager)
+- Install: `npm ci` (add deps with `npm install <pkg>`)
+- Start: `npm start` (`tsx server.ts`; serves `dist/` only with `NODE_ENV=production`)
 - Dev server (Express + Vite middleware): `npm run dev`
 - Typecheck: `npm run lint` (runs `tsc --noEmit`)
 - Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)

@@ -29,7 +29,7 @@ TODO (not set yet)
 ## Milestones
 | Date | Milestone | Done when |
 | --- | --- | --- |
-| TODO | Demo builds and runs | `npm install`, `npm run lint`, `npm run build` pass from a clean clone |
+| 2026-11-18 (local; CI pending) | Demo builds and runs | `npm ci`, `npm run lint`, `npm run build` pass from a clean clone |
 | TODO | Walking skeleton deployed | App reachable at a staging URL, CI green |
 | TODO | Server API protected | Mutating routes require a signed-in owner (SECURITY S1) |
 | TODO | Feature freeze | Only bug fixes and demo prep after this date |
@@ -45,7 +45,6 @@ TODO (not set yet)
 ## Open questions
 - Which store is the source of truth: the server JSON file or Firestore?
 - Which parts must be real on testnet for judging (anchoring, x402 settlement, credential checks), and which may stay simulated if labelled?
-- Package manager: npm or bun?
 - Hosting platform?
 
 ## Demo / delivery script
