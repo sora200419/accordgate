@@ -16,14 +16,16 @@ Review of the imported Gemini demo done on 2026-11-18 by reading the code (not b
 ## Roles and permissions
 | Role | Can read | Can change | Cannot |
 | --- | --- | --- | --- |
-| Anonymous | TODO (today: everything) | TODO (today: everything) | TODO |
-| Compliance officer (signed-in workspace owner) | Own workspace | Agents, policies, webhooks, anchors in own workspace | Other workspaces; audit entries after creation |
-| AI agent (calling the gateway) | Its own invoices | Nothing; only invokes endpoints with a valid signature | Policies, other agents |
+| Anonymous | All `GET` data (webhook secrets masked); testnet probe/inspect | Only indirectly: a call to `/api/gateway/invoke` or MCP `tools/call` with any signature header writes a `BLOCKED_*` audit entry (and, for an unknown DID or policy, nothing else). Failed card-hash or signature checks do not count toward the circuit breaker, so they cannot suspend an agent | Any route in `OWNER_ROUTES`, in any letter case or with a trailing slash (401) |
+| Owner (wallet signed in, address in `OWNER_ACCOUNTS`) | Everything | Agents, policies, webhooks, anchors, x402 settle (simulated), sandbox probe/sign/reset, audit tamper demo | Edit audit entries except through the tamper demo. Single tenant: all owners share one workspace |
+| AI agent (calling the gateway) | Gateway/MCP responses | Nothing; invokes `/api/gateway/invoke` and MCP `tools/call` only with its own Ed25519 signature | Owner routes; requests without a signature (401) |
 
 ## Findings from the demo review
 | # | Finding | Where | Status |
 | --- | --- | --- | --- |
-| S1 | No authentication on any server API: anyone can change agent status, policies, settle invoices, delete webhooks, reset the sandbox | `server.ts` routes from line ~932 | open |
+| S1 | No authentication on any server API: anyone can change agent status, policies, settle invoices, delete webhooks, reset the sandbox | `server.ts` routes | fixed 2026-11-18: Concordium wallet sign-in + `OWNER_ROUTES` guard (`server/auth.ts`), tests in `server/auth.test.ts`. Also fixed: the pipeline signed unsigned agent requests itself with the stored agent key, so unsigned `/api/gateway/invoke` and MCP `tools/call` passed (MCP also defaulted to the first agent's DID); `GET /api/webhooks` returned full HMAC secrets |
+| S8 | `/api/auth/challenge` and `/api/auth/verify` need no login and have no rate limit; each verify attempt with a valid-looking nonce keeps a used-nonce entry for up to 5 min, so a flood grows memory. Sign-in state is per process (single instance only) | `server/auth.ts` | open (accepted for the MVP demo) |
+| S7 | Agent request signatures have no freshness: `X-Agent-Timestamp` is signed but never checked against the clock and there is no nonce, so a captured signed request can be replayed | `server.ts` `evaluateCompliancePipeline` | open |
 | S2 | Agent private keys stored in plaintext in `data/gateway-state.json` | `server/store.ts`, `server.ts` ~1023 | partly: `data/` is now git-ignored and not imported; storage itself unchanged |
 | S3 | Simulated results look real: x402 settle sets `settled` with a fake `0xccd_…` hash; anchors fall back to `simulated-payload` with a hard-coded address; "ZKP" is a SHA-256 commitment, not a zero-knowledge proof | `server.ts` ~1424, `server/crypto.ts`, `src/services/concordiumWallet.ts` | open |
 | S4 | Webhook test fetches any user-supplied URL (SSRF); only a 4.5 s timeout, no block on private/internal addresses | `server.ts` ~1749 | open |
@@ -33,10 +35,11 @@ Review of the imported Gemini demo done on 2026-11-18 by reading the code (not b
 ## Threats
 | Threat | Where | Defence | Test |
 | --- | --- | --- | --- |
-| Unauthenticated admin actions | all mutating `/api/*` routes | S1: require a verified session, check workspace ownership | TODO |
-| Accessing another workspace's record by id (IDOR) | `/api/agents/:id/*`, `/api/webhooks/:id` | Owner check from session | TODO |
-| Replay / double settle | `/api/x402/settle`, `/api/gateway/invoke` | Nonce or idempotency key; settle at most once | TODO |
-| Forged agent request | `/api/gateway/invoke`, `/api/mcp` | Ed25519 signature over a canonical payload with nonce and expiry | TODO |
+| Unauthenticated admin actions | every route in `OWNER_ROUTES` | S1: wallet-signed challenge (single use, 5 min), HttpOnly SameSite=Strict session cookie (8 h), allowlist `OWNER_ACCOUNTS`, fail closed (503) when unset | `server/auth.test.ts`: every owner route 401; registered non-GET routes all owner-only or listed public; 503 unconfigured |
+| Sign-in replay / forgery / lockout | `/api/auth/challenge`, `/api/auth/verify` | Stateless challenge: nonce = random + expiry + HMAC (per-process key) over account, so requesting more challenges cannot evict or block the owner's; nonce marked used before any await; message rebuilt server-side; signature checked against on-chain account keys | `auth.test.ts`: replay, 3 concurrent verifies → 1 success, expired challenge, forged nonce, 50 later challenges do not invalidate the owner's, 1100-challenge flood, wrong key, wrong message, unknown credential, lookup failure |
+| Accessing another workspace's record by id (IDOR) | `/api/agents/:id/*`, `/api/webhooks/:id` | Not applicable yet: single tenant, every owner owns everything | — |
+| Replay / double settle | `/api/x402/settle`, `/api/gateway/invoke` | Settle is owner-only and idempotent (already settled → unchanged). Agent request replay: S7 | TODO (S7) |
+| Forged agent request | `/api/gateway/invoke`, `/api/mcp` | Caller must send `X-Agent-Signature` + `X-Agent-Timestamp`; server self-signs only for the owner sandbox. Freshness/nonce: S7 | `auth.test.ts`: unsigned → 401, forged → signature step fails, valid → passes |
 | SSRF via webhook URL | `/api/webhooks/:id/test` and dispatch | S4: https only, resolve and block private ranges | TODO |
 | Audit tampering | `/api/audit/simulate-tamper` exists on purpose for the demo | Keep only in demo mode; verification must flag it | TODO |
 | Key leakage | state file, logs, API responses | Never return or log keys; move keys out of the JSON file | TODO |
@@ -52,7 +55,7 @@ Review of the imported Gemini demo done on 2026-11-18 by reading the code (not b
 ## External services
 | Service / SDK | Version | Network | Timeout | Rate limit | On failure |
 | --- | --- | --- | --- | --- | --- |
-| Concordium gRPC node (`@concordium/web-sdk`) | ^12.0.2 | testnet | TODO | TODO | Probe returns `reachable: false` |
+| Concordium gRPC node (`@concordium/web-sdk`) | ^12.0.2 | testnet | 5 s per call | TODO | Probe returns `reachable: false`; sign-in account lookup retries 3× (300/600 ms) then 502 naming the cause, NOT_FOUND → 401 |
 | Concordium Browser Wallet (`@concordium/browser-wallet-api-helpers`) | ^3.3.0 | testnet | 1.2–1.5 s detect | — | Falls back silently (S6) |
 | Firebase Auth + Firestore (`firebase`) | ^13.4.0, optional (off unless `VITE_FIREBASE_*` set) | — | TODO | TODO | Sync errors caught and logged in `App.tsx`; when off, sync throws "Firebase not configured" |
 | DNS TXT lookup (`node:dns`) | Node built-in | — | TODO | — | Returns `dnsResolved: false` |

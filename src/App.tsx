@@ -18,7 +18,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { api } from './api';
+import { api, SignInRequiredError } from './api';
 import { AgentRegistryView } from './components/AgentRegistryView';
 import { AuditLedgerView } from './components/AuditLedgerView';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -28,8 +28,8 @@ import { ProtocolSandboxView } from './components/ProtocolSandboxView';
 import { auth, firebaseEnabled, googleProvider, testFirestoreConnection } from './firebase';
 import {
   anchorAuditRootWithWallet,
-  connectConcordiumBrowserWallet,
   signGovernanceActionWithWallet,
+  signInWithWallet,
 } from './services/concordiumWallet';
 import { syncWorkspaceToFirestore, type WorkspaceSyncSummary } from './services/firestoreSync';
 import type {
@@ -89,6 +89,7 @@ function AccordGateDashboard() {
   // Concordium Browser Wallet state
   const [walletAccount, setWalletAccount] = useState<string | null>(null);
   const [connectingWallet, setConnectingWallet] = useState(false);
+  const [ownerSignInConfigured, setOwnerSignInConfigured] = useState(true);
 
   const notify = useCallback((message: string) => {
     setToastMsg(message);
@@ -100,6 +101,26 @@ function AccordGateDashboard() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
+
+  // Restore the owner session (HttpOnly cookie) and show sign-in errors from any action.
+  useEffect(() => {
+    api
+      .authMe()
+      .then((me) => {
+        setWalletAccount(me.account);
+        setOwnerSignInConfigured(me.ownerSignInConfigured);
+      })
+      .catch((err) => console.error('Owner session check failed:', err instanceof Error ? err.message : err));
+    const onRejection = (event: PromiseRejectionEvent) => {
+      // Only sign-in errors are expected here; anything else stays in the console as a real bug.
+      if (event.reason instanceof SignInRequiredError) {
+        notify(event.reason.message);
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => window.removeEventListener('unhandledrejection', onRejection);
+  }, [notify]);
 
   useEffect(() => {
     if (!auth) return;
@@ -216,18 +237,25 @@ function AccordGateDashboard() {
   async function handleConnectWallet() {
     setConnectingWallet(true);
     try {
-      const res = await connectConcordiumBrowserWallet();
-      if (res.connected && res.accountAddress) {
-        setWalletAccount(res.accountAddress);
-        notify(`已连接 Concordium Browser Wallet: ${res.accountAddress.slice(0, 10)}...`);
-      } else if (res.extensionAvailable) {
-        notify('请在 Concordium Browser Wallet 弹窗中授权连接账户');
-      } else {
-        notify('未检测到 Concordium Browser Wallet 插件，链上存证将使用确定性签章回退模式');
-      }
+      const account = await signInWithWallet(api);
+      setWalletAccount(account);
+      notify(`已用 Concordium 钱包登录为所有者: ${account.slice(0, 10)}...`);
+    } catch (err) {
+      notify(err instanceof Error ? `钱包登录失败: ${err.message}` : '钱包登录失败');
     } finally {
       setConnectingWallet(false);
     }
+  }
+
+  async function handleWalletSignOut() {
+    try {
+      await api.authLogout();
+    } catch (err) {
+      notify(err instanceof Error ? `退出失败: ${err.message}` : '退出失败');
+      return;
+    }
+    setWalletAccount(null);
+    notify('已退出所有者会话');
   }
 
   async function handleCreateAgent(payload: {
@@ -444,13 +472,10 @@ function AccordGateDashboard() {
           </span>
           <button
             type="button"
-            onClick={() => {
-              setWalletAccount(null);
-              notify('已断开 Concordium 钱包会话');
-            }}
+            onClick={handleWalletSignOut}
             className="text-[11px] underline shrink-0"
           >
-            断开
+            退出
           </button>
         </div>
       ) : (
@@ -461,7 +486,9 @@ function AccordGateDashboard() {
           className="flex w-full items-center gap-2.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
           <Wallet className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{connectingWallet ? '连接钱包中...' : '连接 Concordium 钱包'}</span>
+          <span className="truncate">
+            {connectingWallet ? '等待钱包签名...' : ownerSignInConfigured ? '用 Concordium 钱包登录（所有者）' : '所有者登录未配置（OWNER_ACCOUNTS）'}
+          </span>
         </button>
       )}
 

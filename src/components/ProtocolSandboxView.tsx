@@ -217,6 +217,18 @@ export function ProtocolSandboxView({
       if (receiptToUse) {
         headers['X-Payment-Receipt'] = receiptToUse;
       }
+      if (mcpMethod === 'tools/call') {
+        // The gateway only accepts signed tool calls. In the sandbox the owner asks the server to sign
+        // with the agent's demo key (owner-only route); a real agent signs with its own key.
+        const toolPolicy = mcpPolicies.find(
+          (p) => p.endpointPath.split('/').pop() === mcpToolName || p.endpointPath === mcpToolName,
+        );
+        if (toolPolicy) {
+          const signed = await api.sandboxSign(selectedAgent.did, toolPolicy.endpointPath);
+          headers['X-Agent-Signature'] = signed.signatureHex;
+          headers['X-Agent-Timestamp'] = signed.timestamp;
+        }
+      }
 
       const res = await api.callMcpRpc(requestPayload, headers);
       setMcpResponse({ httpStatus: res.httpStatus, requestPayload, body: res.body });
@@ -251,7 +263,12 @@ export function ProtocolSandboxView({
   -H "X-Agent-Card-Hash: ${simulateTamperedCard ? 'tampered_0000000000000000' : selectedAgent.cardHash}" \\
   -H "X-ZKP-Jurisdiction: ${jurisdictionClaim}" \\
   -H "X-ZKP-Age: ${ageClaim}" \\
-  -d '{"endpointPath":"${selectedPolicy.endpointPath}","requestedTransferPlt":${requestedTransferPlt}}'`
+  -H "X-Agent-Timestamp: $TS" \\
+  -H "X-Agent-Signature: $SIG" \\
+  -d '{"endpointPath":"${selectedPolicy.endpointPath}","requestedTransferPlt":${requestedTransferPlt}}'
+# $TS = ISO-8601 time; $SIG = hex Ed25519 signature by the agent key over
+# "${selectedAgent.did}|${selectedPolicy.endpointPath}|$TS|${selectedAgent.cardHash}"
+# Unsigned requests are rejected with 401.`
     : '';
 
   const typescriptSdkSnippet = selectedAgent && selectedPolicy
@@ -262,12 +279,14 @@ const GATEWAY = '${window.location.origin}';
 const AGENT_DID = '${selectedAgent.did}';
 const CARD_HASH = '${selectedAgent.cardHash}';
 
+const ENDPOINT = '${selectedPolicy.endpointPath}';
+
 async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) {
-  const payload = JSON.stringify({
-    endpointPath: '${selectedPolicy.endpointPath}',
-    requestedTransferPlt: ${requestedTransferPlt},
-  });
-  const sig = crypto.sign(null, Buffer.from(payload), privateKeyPem).toString('base64');
+  const payload = JSON.stringify({ endpointPath: ENDPOINT, requestedTransferPlt: ${requestedTransferPlt} });
+  // The gateway verifies an Ed25519 signature (hex) over "did|endpointPath|timestamp|cardHash".
+  const timestamp = new Date().toISOString();
+  const signingPayload = \`\${AGENT_DID}|\${ENDPOINT}|\${timestamp}|\${CARD_HASH}\`;
+  const sig = crypto.sign(null, Buffer.from(signingPayload, 'utf-8'), privateKeyPem).toString('hex');
 
   const res = await fetch(\`\${GATEWAY}/api/gateway/invoke\`, {
     method: 'POST',
@@ -276,6 +295,7 @@ async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) 
       'X-Concordium-Agent-DID': AGENT_DID,
       'X-Agent-Card-Hash': CARD_HASH,
       'X-Agent-Signature': sig,
+      'X-Agent-Timestamp': timestamp,
       'X-ZKP-Jurisdiction': '${jurisdictionClaim}',
       'X-ZKP-Age': '${ageClaim}',
       ...(receiptId ? { 'X-Payment-Receipt': receiptId } : {}),
@@ -285,12 +305,9 @@ async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) 
 
   if (res.status === 402) {
     const { invoice } = await res.json();
-    await fetch(\`\${GATEWAY}/api/x402/settle\`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId: invoice.invoiceId }),
-    });
-    return callProtectedEndpoint(privateKeyPem, invoice.invoiceId);
+    // In this demo x402 settlement is SIMULATED and done by the gateway owner in the console
+    // (/api/x402/settle needs the owner's wallet sign-in). Retry with the receipt once it is settled.
+    return { paymentRequired: invoice };
   }
   return res.json();
 }`
@@ -311,10 +328,12 @@ BODY = {"endpointPath": "${selectedPolicy.endpointPath}", "requestedTransferPlt"
 
 with httpx.Client() as client:
     r = client.post(f"{GATEWAY}/api/gateway/invoke", json=BODY, headers=HEADERS)
+    # Add X-Agent-Timestamp and X-Agent-Signature (hex Ed25519 over "did|endpointPath|timestamp|cardHash");
+    # unsigned requests are rejected with 401.
     if r.status_code == 402:
+        # x402 settlement is SIMULATED in this demo and done by the gateway owner in the console;
+        # retry with {"X-Payment-Receipt": invoice_id} once it is settled.
         invoice_id = r.json()["invoice"]["invoiceId"]
-        client.post(f"{GATEWAY}/api/x402/settle", json={"invoiceId": invoice_id})
-        r = client.post(f"{GATEWAY}/api/gateway/invoke", json=BODY, headers={**HEADERS, "X-Payment-Receipt": invoice_id})
     print(r.status_code, r.json())`
     : '';
 

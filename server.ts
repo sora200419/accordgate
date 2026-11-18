@@ -1,11 +1,15 @@
+import 'dotenv/config';
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { AccountAddress, ContractAddress } from '@concordium/web-sdk';
 import { ConcordiumGRPCNodeClient, credentials } from '@concordium/web-sdk/nodejs';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+import { AccountNotFoundError, createAuth, parseOwnerAccounts } from './server/auth.ts';
+import type { AccountInfoLookup } from './server/auth.ts';
 import {
   computeAgentCardHash,
   generateMockTxHash,
@@ -407,7 +411,11 @@ function evaluateCompliancePipeline(input: SandboxClaimInput) {
       x402ReceiptId: null,
       amountPlt: 0,
     });
-    recordPolicyViolationAndCheckCircuitBreaker(db, agent, policy, 'Agent Card SHA-256 tampered');
+    // The caller is not authenticated yet, so outside the owner sandbox this must not count
+    // toward auto-suspension (anyone who knows a DID could otherwise suspend the agent).
+    if (input.allowServerSigning) {
+      recordPolicyViolationAndCheckCircuitBreaker(db, agent, policy, 'Agent Card SHA-256 tampered');
+    }
     saveDatabase(db);
     return {
       httpStatus: 403,
@@ -434,7 +442,7 @@ function evaluateCompliancePipeline(input: SandboxClaimInput) {
   const timestamp = input.providedTimestamp || new Date().toISOString();
   const signingPayload = `${agent.did}|${policy.endpointPath}|${timestamp}|${canonicalDigest}`;
   let signatureHex = input.providedSignatureHex || '';
-  if (!signatureHex) {
+  if (!signatureHex && input.allowServerSigning) {
     const privateKeyPem = db.proverKeys?.[agent.did];
     signatureHex = privateKeyPem ? signAgentRequest(privateKeyPem, signingPayload) : '';
   }
@@ -481,7 +489,10 @@ function evaluateCompliancePipeline(input: SandboxClaimInput) {
       x402ReceiptId: null,
       amountPlt: 0,
     });
-    recordPolicyViolationAndCheckCircuitBreaker(db, agent, policy, 'Invalid Ed25519 signature');
+    // An invalid signature does not prove the caller is the agent; only the owner sandbox counts it.
+    if (input.allowServerSigning) {
+      recordPolicyViolationAndCheckCircuitBreaker(db, agent, policy, 'Invalid Ed25519 signature');
+    }
     saveDatabase(db);
     return {
       httpStatus: 403,
@@ -923,11 +934,45 @@ function toCsv(logs: AuditEntry[]): string {
   return [header.join(','), ...rows].join('\n');
 }
 
-async function startServer() {
+/** Reads an account's credential keys from Concordium testnet (used to verify wallet sign-in). */
+const getTestnetAccountInfo: AccountInfoLookup = async (address) => {
+  const client = createTestnetGrpcClient();
+  try {
+    return await client.getAccountInfo(address);
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === 'NOT_FOUND') {
+      throw new AccountNotFoundError('Account not found on Concordium testnet');
+    }
+    throw err;
+  }
+};
+
+function maskWebhookSecret(wh: WebhookConfig): WebhookConfig {
+  const secret = wh.signingSecretPreview || '';
+  return { ...wh, signingSecretPreview: secret ? `whsec_…${secret.slice(-4)}` : '' };
+}
+
+export interface AppDeps {
+  ownerAccounts: string[];
+  getAccountInfo: AccountInfoLookup;
+  now?: () => number;
+  secureCookie?: boolean;
+}
+
+/** Builds the Express app with all /api routes (no Vite, no listen) so tests can run it. */
+export function createApp(deps: AppDeps) {
   const app = express();
+  // Exact path matching, so only the paths the owner guard checks reach a handler.
+  app.set('case sensitive routing', true);
+  app.set('strict routing', true);
   app.use(express.json());
 
   loadDatabase();
+
+  const auth = createAuth(deps);
+  app.use(auth.router);
+  // Every route listed in OWNER_ROUTES (server/auth.ts) needs a signed-in owner.
+  app.use(auth.ownerGuard);
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', service: 'accordgate-compliance-gateway', timestamp: new Date().toISOString() });
@@ -1415,10 +1460,36 @@ async function startServer() {
       simulateRateLimitSpike: Boolean(body.simulateRateLimitSpike),
       requestedTransferPlt: Number(body.requestedTransferPlt ?? 0),
       paymentReceiptId: body.paymentReceiptId ?? null,
+      // Owner-only sandbox: the server may sign as the agent to demo the pipeline.
+      allowServerSigning: true,
     });
 
     Object.entries(result.headers).forEach(([k, v]) => res.setHeader(k, v));
     res.status(result.httpStatus).json(result);
+  });
+
+  // Owner-only: signs a gateway request as the agent so the sandbox can send real signed headers.
+  app.post('/api/sandbox/sign', (req, res) => {
+    const agentDid = String(req.body?.agentDid ?? '');
+    const endpointPath = String(req.body?.endpointPath ?? '');
+    if (!agentDid || !endpointPath) {
+      res.status(400).json({ error: 'agentDid and endpointPath are required.' });
+      return;
+    }
+    const db = loadDatabase();
+    const agent = db.agents.find((a) => a.did === agentDid);
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found.' });
+      return;
+    }
+    const privateKeyPem = db.proverKeys?.[agent.did];
+    if (!privateKeyPem) {
+      res.status(409).json({ error: 'No server-held key for this agent; it must sign its own requests.' });
+      return;
+    }
+    const timestamp = new Date().toISOString();
+    const signingPayload = `${agent.did}|${endpointPath}|${timestamp}|${computeAgentCardHash(agent.agentCard)}`;
+    res.json({ timestamp, signatureHex: signAgentRequest(privateKeyPem, signingPayload) });
   });
 
   app.post('/api/x402/settle', (req, res) => {
@@ -1456,6 +1527,10 @@ async function startServer() {
 
     if (!agentDid) {
       res.status(401).json({ error: 'Missing X-Concordium-Agent-DID header.' });
+      return;
+    }
+    if (!signatureHeader || !timestampHeader) {
+      res.status(401).json({ error: 'Missing X-Agent-Signature or X-Agent-Timestamp header; agents must sign each request.' });
       return;
     }
 
@@ -1559,10 +1634,21 @@ async function startServer() {
         return;
       }
 
-      const agentDid = req.header('X-Concordium-Agent-DID') || db.agents[0]?.did || '';
+      const agentDid = req.header('X-Concordium-Agent-DID') || '';
       const cardHashHeader = req.header('X-Agent-Card-Hash') || '';
       const signatureHeader = req.header('X-Agent-Signature') || null;
       const timestampHeader = req.header('X-Agent-Timestamp') || null;
+      if (!agentDid || !signatureHeader || !timestampHeader) {
+        res.status(401).json({
+          jsonrpc: '2.0',
+          id: rpcId,
+          error: {
+            code: -32001,
+            message: 'tools/call needs X-Concordium-Agent-DID, X-Agent-Signature and X-Agent-Timestamp headers.',
+          },
+        });
+        return;
+      }
       const jurisdictionClaim = req.header('X-ZKP-Jurisdiction') || 'EU';
       const ageClaim = Number(req.header('X-ZKP-Age') || '25');
       const paymentReceiptId = req.header('X-Payment-Receipt') || null;
@@ -1702,7 +1788,8 @@ async function startServer() {
   // Webhooks Management & Live Test Dispatch
   app.get('/api/webhooks', (_req, res) => {
     const db = loadDatabase();
-    res.json({ webhooks: db.webhooks ?? [], deliveries: db.webhookDeliveries ?? [] });
+    // The signing secret is shown once on creation; reads only get a masked preview.
+    res.json({ webhooks: (db.webhooks ?? []).map(maskWebhookSecret), deliveries: db.webhookDeliveries ?? [] });
   });
 
   app.post('/api/webhooks', (req, res) => {
@@ -2012,6 +2099,20 @@ async function startServer() {
     res.json({ status: 'reset', agents: fresh.agents.length, policies: fresh.policies.length, auditLogs: fresh.auditLogs.length });
   });
 
+  return app;
+}
+
+async function startServer() {
+  const ownerAccounts = parseOwnerAccounts(process.env.OWNER_ACCOUNTS);
+  if (ownerAccounts.length === 0) {
+    console.warn('[auth] OWNER_ACCOUNTS is not set: every change to the gateway is refused until it is.');
+  }
+  const app = createApp({
+    ownerAccounts,
+    getAccountInfo: getTestnetAccountInfo,
+    secureCookie: process.env.NODE_ENV === 'production',
+  });
+
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(process.cwd(), 'dist'));
   if (isProd) {
     const distDir = path.resolve(process.cwd(), 'dist');
@@ -2032,7 +2133,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start AccordGate server:', err);
-  process.exit(1);
-});
+// Start only when run directly (`tsx server.ts`), not when tests import createApp.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  startServer().catch((err) => {
+    console.error('Failed to start AccordGate server:', err);
+    process.exit(1);
+  });
+}

@@ -45,7 +45,7 @@ See the role and permission table in `docs/SECURITY.md`.
 
 ## Conventions (decide once, apply to every table)
 - [ ] Primary key type: TODO (demo uses prefixed strings like `agt_…`)
-- [ ] Owner field on user data: TODO (`ownerUid` / `workspaceId` exist only in Firestore)
+- [ ] Owner field on user data: TODO (`ownerUid` / `workspaceId` exist only in Firestore). The server is single-tenant: owners are the `OWNER_ACCOUNTS` wallet addresses and own everything; records carry no owner field.
 - [x] `createdAt` / `updatedAt` as ISO strings in UTC
 - [ ] Money: TODO — demo stores PLT/EURt and CCD amounts as JS `number` (float). Move to integer minor units before real payments.
 - [x] Status fields are string unions (`AgentStatus`, invoice `status`, anchor `mode`); transitions: TODO

@@ -25,13 +25,53 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   const data = await res.json();
+  throwIfAuthError(res.status, data);
   if (!res.ok && res.status !== 402 && res.status !== 403 && res.status !== 429) {
     throw new Error(data?.error || `Request failed with status ${res.status}`);
   }
   return data as T;
 }
 
+/** Thrown when an action needs the owner's wallet sign-in; App shows it as a toast. */
+export class SignInRequiredError extends Error {}
+
+/** Owner sign-in errors (401/503, and 403 "not an owner") always become a visible error. */
+function throwIfAuthError(status: number, data: unknown) {
+  const body = data as { error?: unknown; outcome?: unknown } | null;
+  const isOwnerDenied = status === 403 && typeof body?.error === 'string' && body?.outcome === undefined;
+  if (status === 401 || status === 503 || isOwnerDenied) {
+    throw new SignInRequiredError(typeof body?.error === 'string' ? body.error : `Request failed with status ${status}`);
+  }
+}
+
 export const api = {
+  authMe: async (): Promise<{ account: string | null; ownerSignInConfigured: boolean }> => {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) throw new Error(`Owner session check failed with status ${res.status}`);
+    const data = await res.json();
+    return { account: data.account ?? null, ownerSignInConfigured: data.ownerSignInConfigured !== false };
+  },
+
+  authChallenge: (accountAddress: string) =>
+    requestJson<{ nonce: string; message: string; expiresAt: string }>('/api/auth/challenge', {
+      method: 'POST',
+      body: JSON.stringify({ accountAddress }),
+    }),
+
+  authVerify: (payload: { accountAddress: string; nonce: string; signature: unknown }) =>
+    requestJson<{ account: string }>('/api/auth/verify', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  authLogout: () => requestJson<{ signedOut: boolean }>('/api/auth/logout', { method: 'POST' }),
+
+  sandboxSign: (agentDid: string, endpointPath: string) =>
+    requestJson<{ timestamp: string; signatureHex: string }>('/api/sandbox/sign', {
+      method: 'POST',
+      body: JSON.stringify({ agentDid, endpointPath }),
+    }),
+
   getOverview: () =>
     requestJson<{ metrics: OverviewMetrics; recentLogs: AuditEntry[] }>('/api/overview'),
 
@@ -116,7 +156,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return (await res.json()) as SandboxProbeResponse;
+    const data = await res.json();
+    throwIfAuthError(res.status, data);
+    return data as SandboxProbeResponse;
   },
 
   callMcpRpc: async (
