@@ -21,7 +21,8 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Dev server (Express + Vite middleware): `npm run dev`
 - Typecheck: `npm run lint` (runs `tsc --noEmit`)
 - Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)
-- Test: `npm test` (`tsx --test server/auth.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
+- Test: `npm test` (`tsx --test server/auth.test.ts scripts/check-doc-packages.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
+- Docs package check (F-001): `npm run check:docs` — backticked lower-case package names (scoped, or in `package-lock.json`) in README, CLAUDE.md and `docs/` must be direct dependencies (or listed in `ALLOWED` in `scripts/check-doc-packages.ts` with a reason)
 - Owner sign-in needs `OWNER_ACCOUNTS` (testnet addresses) in `.env`; owner-only routes are `OWNER_ROUTES` in `server/auth.ts`
 - Build: `npm run build`
 - Reset demo data: delete `data/gateway-state.json` or `POST /api/sandbox/reset`
@@ -34,7 +35,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 | Secrets from | `.env` | Platform env vars | Platform env vars |
 | Deploys when | — | Every PR (preview) | Merge to main, after CI is green |
 
-- CI: `.github/workflows/ci.yml` runs install, typecheck, test, build.
+- CI: `.github/workflows/ci.yml` runs install, docs package check, typecheck, test, build.
 - Contracts read by the server: testnet `<10082,0>` (CIS-8004) and `<10081,0>` (CIS-8). Not deployed by us.
 - Mainnet actions are done by the user, never by CI or Claude.
 - Live state comes from the platform's deploy records and logs, never inferred from config.

@@ -7,7 +7,7 @@ Mishaps that forced rework, with the rule each one produced. Newest at the botto
 - **Root cause**: I updated only the files the plan named. I didn't grep the repo for the old facts, even though a global rule already asks for every surface to be fixed.
 - **Fix**: updated SECURITY.md and BRIEF.md. `grep -rn "not in package.json\|npm or bun\|firebase-applet-config"` now finds only history lines in PLAN.md.
 - **Rule destination**: global ledger, merged into "Trace feature claims to where they are written" (a recurrence of PayPal F-014 / oco-reactive F-006). → merged (pruned 2026-11-18) into global "Trace claims to code and fix every copy of a changed fact".
-- **Recurrences**: this is itself the recurrence. Automation proposed to the user, not started: a CI step that fails when docs mention a package that is not in package.json.
+- **Recurrences**: this is itself the recurrence. Automated (2026-11-18, `chore/ci-and-docs`): CI step `npm run check:docs` (`scripts/check-doc-packages.ts`) checks backticked lower-case package names (scoped, or in `package-lock.json`) in README, CLAUDE.md and `docs/`: it fails when one is not a direct dependency, or when a line calls a direct dependency "not in package.json". It does not catch unscoped names that are not installed, upper-case names, or names with a version inside the backticks.
 
 ### F-002 · 2026-11-18 · Owner guard bypassed by path letter case
 - **What happened**: S1's `ownerGuard` matched `OWNER_ROUTES` with case-sensitive regexes on `req.path`, but Express 4 routes case-insensitively by default. `POST /API/sandbox/reset` and `/api/Sandbox/Sign` reached owner-only handlers without a session. The tests sent only exact lowercase paths, so all 20 passed. The referee flagged it as Blocking (R1).
