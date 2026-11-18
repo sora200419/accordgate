@@ -2,40 +2,36 @@ import { detectConcordiumProvider } from '@concordium/browser-wallet-api-helpers
 import { AccountTransactionType, DataBlob } from '@concordium/web-sdk';
 import type { OnchainAnchorRecord } from '../types';
 
-export interface WalletConnectionState {
-  connected: boolean;
-  accountAddress: string | null;
-  extensionAvailable: boolean;
-  network: 'testnet';
-}
-
-export async function connectConcordiumBrowserWallet(): Promise<WalletConnectionState> {
+/**
+ * Owner sign-in (SECURITY.md S1): connect the wallet, sign the server's one-time challenge,
+ * and let the server check the signature against the account's on-chain keys.
+ * Errors are thrown with the step that failed; nothing falls back silently.
+ */
+export async function signInWithWallet(api: {
+  authChallenge: (accountAddress: string) => Promise<{ nonce: string; message: string }>;
+  authVerify: (payload: { accountAddress: string; nonce: string; signature: unknown }) => Promise<{ account: string }>;
+}): Promise<string> {
+  let provider: Awaited<ReturnType<typeof detectConcordiumProvider>>;
   try {
-    const provider = await detectConcordiumProvider(1500);
-    const account = await provider.connect();
-    if (!account) {
-      return {
-        connected: false,
-        accountAddress: null,
-        extensionAvailable: true,
-        network: 'testnet',
-      };
-    }
-    return {
-      connected: true,
-      accountAddress: account,
-      extensionAvailable: true,
-      network: 'testnet',
-    };
-  } catch {
-    // Fallback deterministic Testnet sponsor-operator account when extension is not installed
-    return {
-      connected: false,
-      accountAddress: null,
-      extensionAvailable: false,
-      network: 'testnet',
-    };
+    provider = await detectConcordiumProvider(1500);
+  } catch (err) {
+    throw new Error(
+      `Concordium Browser Wallet not found (${err instanceof Error ? err.message : 'no provider'}). Install or unlock the extension.`,
+    );
   }
+  const accountAddress = await provider.connect();
+  if (!accountAddress) {
+    throw new Error('Wallet did not share an account; approve the connection in the wallet pop-up.');
+  }
+  const { nonce, message } = await api.authChallenge(accountAddress);
+  let signature: unknown;
+  try {
+    signature = await provider.signMessage(accountAddress, message);
+  } catch (err) {
+    throw new Error(`Wallet did not sign the sign-in message (${err instanceof Error ? err.message : 'rejected'}).`);
+  }
+  const { account } = await api.authVerify({ accountAddress, nonce, signature });
+  return account;
 }
 
 export async function signGovernanceActionWithWallet(

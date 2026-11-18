@@ -18,8 +18,11 @@ import type {
   ZkpVerificationSummary,
 } from './types.ts';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_PATH = path.join(DATA_DIR, 'gateway-state.json');
+// ACCORDGATE_DB_PATH lets tests use a temp file instead of data/gateway-state.json.
+const DB_PATH = process.env.ACCORDGATE_DB_PATH
+  ? path.resolve(process.env.ACCORDGATE_DB_PATH)
+  : path.resolve(process.cwd(), 'data', 'gateway-state.json');
+const DATA_DIR = path.dirname(DB_PATH);
 
 export const SPONSOR_FACILITATOR_ACCOUNT = '3xK9qM7vP2L8nR4wT6yB1cD5fG8hJ0kL2mN4pQ9sSponsor';
 

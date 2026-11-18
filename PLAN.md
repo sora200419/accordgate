@@ -3,38 +3,41 @@
 <!-- Rewritten at the end of Plan Mode for every slice. After /clear, a new session continues with "@PLAN.md". -->
 
 ## Slice
-Slice 1 — make the imported demo install, typecheck and build from a clean clone. No behaviour changes.
-Start this in Plan Mode: confirm each item below by running the commands before changing anything.
+S1 — owner sign-in with the Concordium Browser Wallet; every state-changing route needs a signed-in owner; agents must sign their own gateway requests. Branch `feat/s1-wallet-owner-auth`.
 
 ## Decisions (made 2026-11-18)
-- npm (bun.lock deleted, package-lock.json committed)
-- Firebase optional via `VITE_FIREBASE_*` env vars; off when unset
+- Sign-in = wallet `signMessage` over a one-time server challenge, verified against on-chain account keys (no Google/Firebase needed)
+- Owners = `OWNER_ACCOUNTS` env allowlist; empty → owner routes 503 (fail closed)
+- Reads stay public; `GET /api/webhooks` masks the signing secret
+- Server self-signing allowed only for the owner sandbox; agent request freshness / replay → S7, later slice
+- Tests: node:test via `tsx --test`, no new dependency
 
-## Phase 1: dependencies and config
-- [x] Baseline: `npm install` failed on peer conflict (root `esbuild ^0.25` vs vite 8 peer `^0.27 || ^0.28`); after deps fixed, lint/build failed only on missing `firebase-applet-config.json`
-- [x] Added `firebase ^13.4.0` (declares Node >=24.12; firebase 12 pulls the same `@firebase/app` via peers. User accepted the Node 22 engine warning on 2026-11-18), `@concordium/browser-wallet-api-helpers ^3.3.0`; removed unused `esbuild`, `@google/genai`
-- [x] `typescript 7.0.2` is released and `tsc --noEmit` passes
-- [x] Remove `GEMINI_API_KEY` from `.env.example` and add `VITE_FIREBASE_*` placeholders (applied by the user)
-- [x] Firebase config from env (`src/firebase.ts`, `README.md`)
-- [x] `npm start` → `tsx server.ts` (Node 22.15 cannot run .ts without a flag); serves `/` and `/api/agents` with 200
+## Phase 1: server
+- [x] `server/auth.ts`: challenge / verify / me / logout, stateless HMAC challenges (5 min, single use via an in-memory used-nonce set) and in-memory sessions (8 h), HttpOnly SameSite=Strict cookie, `OWNER_ROUTES` guard
+- [x] `server.ts`: `createApp()` / `startServer()` split, `dotenv/config`, guard applied, `/api/sandbox/sign`, gateway + MCP `tools/call` require signature, webhook secret masked
+- [x] `server/store.ts`: `ACCORDGATE_DB_PATH` override for tests
 
-## Phase 2: frontend and integration
-- [x] `npm run dev`: all five tabs render, no browser console errors
-- [x] README "What works now", "Run it", "Configuration" updated
+## Phase 2: frontend and docs
+- [x] Sidebar wallet sign-in / sign-out, session restored on load, sign-in errors shown as toasts
+- [x] Sandbox MCP `tools/call` signs through `/api/sandbox/sign`; curl / TS / Python snippets show the real signing payload and no agent-side settle
+- [x] README, SECURITY (S1 fixed, S7 new), BRIEF, DATA_MODEL, CLAUDE.md, CI Test step
+- [x] `.env.example`: `OWNER_ACCOUNTS=` placeholder (approved by the user 2026-11-18)
 
 ## Contract
-No API changes in this slice.
+New: `POST /api/auth/challenge`, `POST /api/auth/verify`, `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/sandbox/sign` (owner). Changed: `OWNER_ROUTES` return 401/403/503 without an owner session; `/api/gateway/invoke` and MCP `tools/call` return 401 without `X-Agent-Signature` + `X-Agent-Timestamp`; `GET /api/webhooks` masks `signingSecretPreview`. Error shape stays `{ "error": "message" }`.
 
 ## Verification gate
 - [x] Typecheck (`npm run lint`)
 - [x] Build (`npm run build`)
-- [x] Ran the app by hand, all tabs load
-- [x] CI green on main (GitHub Actions run 44249437322, 2026-11-18; placeholder Test step dropped)
-- [x] `.claude/settings.json` deny rule: `Read(./.env.*)` → specific files (applied by the user)
+- [x] Tests (`npm test`, 25 pass) + mutation check (guard, nonce single use, challenge MAC, gateway/MCP signature checks, webhook mask, path-case bypass, anonymous suspend, challenge eviction each caught)
+- [x] Ran the app: with `OWNER_ACCOUNTS` unset, reset → 503 with toast, unsigned invoke → 401, Sandbox tab renders
+- [ ] Real wallet sign-in clicked through once by the user (needs the extension)
+- [x] `harness-review` passed (3 rounds; R1–R3, R7, R8 fixed, R4 applied, R5/N1/N2 recorded)
+- [ ] CI green
 
-## Next slices (from docs/SECURITY.md)
-1. S1 — require a signed-in owner on every mutating API route
-   - After S1: small chore slice, CI check that docs don't name packages missing from `package.json` (automates FAILURES.md F-001; tune for false positives)
-2. S3 — label every simulated result in UI and README
-3. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
-4. S2 — move agent private keys out of the JSON state file
+## Next slices
+1. Chore — bump GitHub Action versions; CI check that docs don't name packages missing from `package.json` (F-001)
+2. S7 — agent request freshness (timestamp window + nonce)
+3. S3 — label every simulated result in UI and README
+4. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
+5. S2 — move agent private keys out of the JSON state file

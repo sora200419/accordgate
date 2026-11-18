@@ -197,6 +197,8 @@ export interface SandboxClaimInput {
   simulateRateLimitSpike?: boolean;
   providedSignatureHex?: string | null;
   providedTimestamp?: string | null;
+  /** Only the owner-only sandbox probe may let the server sign with the agent's stored key. */
+  allowServerSigning?: boolean;
   requestedTransferPlt?: number;
   paymentReceiptId?: string | null;
 }

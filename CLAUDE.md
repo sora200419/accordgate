@@ -21,7 +21,8 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Dev server (Express + Vite middleware): `npm run dev`
 - Typecheck: `npm run lint` (runs `tsc --noEmit`)
 - Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)
-- Test: TODO (no test runner; `firestore.rules.test.ts` exists but nothing runs it)
+- Test: `npm test` (`tsx --test server/auth.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
+- Owner sign-in needs `OWNER_ACCOUNTS` (testnet addresses) in `.env`; owner-only routes are `OWNER_ROUTES` in `server/auth.ts`
 - Build: `npm run build`
 - Reset demo data: delete `data/gateway-state.json` or `POST /api/sandbox/reset`
 
@@ -33,7 +34,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 | Secrets from | `.env` | Platform env vars | Platform env vars |
 | Deploys when | — | Every PR (preview) | Merge to main, after CI is green |
 
-- CI: `.github/workflows/ci.yml` runs install, typecheck, build.
+- CI: `.github/workflows/ci.yml` runs install, typecheck, test, build.
 - Contracts read by the server: testnet `<10082,0>` (CIS-8004) and `<10081,0>` (CIS-8). Not deployed by us.
 - Mainnet actions are done by the user, never by CI or Claude.
 - Live state comes from the platform's deploy records and logs, never inferred from config.
@@ -52,8 +53,9 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Never commit `.env*` (except `.env.example`), `data/`, keys or build output.
 
 ## Project Structure
-- `server.ts` — all API routes (`/api/...`), gateway logic, Vite middleware
-- `server/store.ts` — JSON-file database, seed data; `server/crypto.ts` — hashing, Ed25519, mock tx hash; `server/types.ts`
+- `server.ts` — `createApp()` with all API routes (`/api/...`) and gateway logic; `startServer()` adds Vite/static and listens (only when run directly)
+- `server/auth.ts` — wallet sign-in (challenge/verify/me/logout), sessions, `OWNER_ROUTES` guard; `server/auth.test.ts`
+- `server/store.ts` — JSON-file database (`ACCORDGATE_DB_PATH` overrides the path), seed data; `server/crypto.ts` — hashing, Ed25519, mock tx hash; `server/types.ts`
 - `src/App.tsx` — shell, Google sign-in; `src/components/*View.tsx` — one view per tab; `src/api.ts` — fetch wrapper
 - `src/services/concordiumWallet.ts` — browser wallet connect, sign, RegisterData anchor (with fallbacks)
 - `src/firebase.ts`, `src/services/firestoreSync.ts`, `DRAFT_firestore.rules`, `firestore.rules.test.ts`, `firebase-blueprint.json`, `security_spec.md` — Firestore sync and its rules
@@ -65,4 +67,6 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Never present a simulated chain or payment result as real.
 
 # Mishaps and Prevention Rules
+- **[2026-11-18] `/mcp` responses are rewritten on the dev machine**: When a local HTTP call to a path ending in `/mcp` fails with "terminated" or a chunk-size parse error, use the raw-socket client in `server/auth.test.ts`; local software on this PC rewrites those responses, so don't debug the app first. (F-004)
+- **[2026-11-18] Limits on unauthenticated sign-in endpoints must not displace the owner**: When capping or evicting state that anonymous callers can create (challenges, pending requests), test "owner first, flood after, owner completes". Prefer stateless signed tokens over stored state that can be evicted. (F-003)
 <!-- Project-specific lessons from harness-postmortem. One rule, at most 2 sentences, with date and source. -->
