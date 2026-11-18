@@ -3,41 +3,30 @@
 <!-- Rewritten at the end of Plan Mode for every slice. After /clear, a new session continues with "@PLAN.md". -->
 
 ## Slice
-S1 — owner sign-in with the Concordium Browser Wallet; every state-changing route needs a signed-in owner; agents must sign their own gateway requests. Branch `feat/s1-wallet-owner-auth`.
+Chore — CI and docs cleanup after S1. Branch `chore/ci-and-docs`.
 
 ## Decisions (made 2026-11-18)
-- Sign-in = wallet `signMessage` over a one-time server challenge, verified against on-chain account keys (no Google/Firebase needed)
-- Owners = `OWNER_ACCOUNTS` env allowlist; empty → owner routes 503 (fail closed)
-- Reads stay public; `GET /api/webhooks` masks the signing secret
-- Server self-signing allowed only for the owner sandbox; agent request freshness / replay → S7, later slice
-- Tests: node:test via `tsx --test`, no new dependency
+- GitHub Actions: `actions/checkout@v7` (latest v7.0.1), `actions/setup-node@v7` (latest v7.1.0); their breaking changes touch only `pull_request_target`, which we don't use
+- F-001 automation: `scripts/check-doc-packages.ts`, no new dependency, two checks only: (a) a backticked package (scoped, or installed per `package-lock.json`) must be a direct dependency unless in `ALLOWED` with a reason; (b) a line saying "not in / removed from package.json" must not name a direct dependency
+- Scope of the check: README.md, CLAUDE.md, `docs/**/*.md`; PLAN.md and FAILURES.md are history and not checked
+- `APP_URL` removed from `.env.example`: nothing in the repo reads it
 
-## Phase 1: server
-- [x] `server/auth.ts`: challenge / verify / me / logout, stateless HMAC challenges (5 min, single use via an in-memory used-nonce set) and in-memory sessions (8 h), HttpOnly SameSite=Strict cookie, `OWNER_ROUTES` guard
-- [x] `server.ts`: `createApp()` / `startServer()` split, `dotenv/config`, guard applied, `/api/sandbox/sign`, gateway + MCP `tools/call` require signature, webhook secret masked
-- [x] `server/store.ts`: `ACCORDGATE_DB_PATH` override for tests
-
-## Phase 2: frontend and docs
-- [x] Sidebar wallet sign-in / sign-out, session restored on load, sign-in errors shown as toasts
-- [x] Sandbox MCP `tools/call` signs through `/api/sandbox/sign`; curl / TS / Python snippets show the real signing payload and no agent-side settle
-- [x] README, SECURITY (S1 fixed, S7 new), BRIEF, DATA_MODEL, CLAUDE.md, CI Test step
-- [x] `.env.example`: `OWNER_ACCOUNTS=` placeholder (approved by the user 2026-11-18)
-
-## Contract
-New: `POST /api/auth/challenge`, `POST /api/auth/verify`, `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/sandbox/sign` (owner). Changed: `OWNER_ROUTES` return 401/403/503 without an owner session; `/api/gateway/invoke` and MCP `tools/call` return 401 without `X-Agent-Signature` + `X-Agent-Timestamp`; `GET /api/webhooks` masks `signingSecretPreview`. Error shape stays `{ "error": "message" }`.
+## Steps
+- [x] Bump actions in `.github/workflows/ci.yml` (including the commented deploy job)
+- [x] `scripts/check-doc-packages.ts` + `scripts/check-doc-packages.test.ts`; `npm run check:docs`; CI step "Docs packages"
+- [x] `vite.config.ts`: `__dirname` → `import.meta.dirname` (Vite 8 `configLoader: 'native'` warning)
+- [x] BRIEF milestone "Server API protected" marked done (CI run 44259897748)
+- [x] `.env.example`: `APP_URL` removed
+- [x] README, CLAUDE.md, FAILURES.md (F-001 now automated) updated; pending FAILURES.md pruning committed separately
 
 ## Verification gate
-- [x] Typecheck (`npm run lint`)
-- [x] Build (`npm run build`)
-- [x] Tests (`npm test`, 25 pass) + mutation check (guard, nonce single use, challenge MAC, gateway/MCP signature checks, webhook mask, path-case bypass, anonymous suspend, challenge eviction each caught)
-- [x] Ran the app: with `OWNER_ACCOUNTS` unset, reset → 503 with toast, unsigned invoke → 401, Sandbox tab renders
-- [x] Real wallet sign-in clicked through by the user (2026-11-18, testnet account; sidebar shows the address and 退出; owner reset works; after sign-out reset is refused; session survives reload; agent status change works). Needed `NODE_OPTIONS=--use-system-ca` on this PC because AVG re-signs TLS
-- [x] `harness-review` passed (3 rounds; R1–R3, R7, R8 fixed, R4 applied, R5/N1/N2 recorded)
-- [x] CI green on PR #1 (GitHub Actions run 44259897748, 25/25 tests, 2026-11-18)
+- [x] `npm run lint`, `npm test`, `npm run check:docs` (0 problems), `npm run build` (no `__dirname` warning)
+- [x] Check proven to catch F-001: an injected "`firebase` … not in package.json" line and a missing `ALLOWED` entry each fail
+- [x] `harness-review` passed (1 round; R1 claim wording fixed, R3 noted in header, R2 not adopted per scope, R4 → check CI log for the summary line)
+- [x] CI green on PR #2 (GitHub Actions run 44291817506, 31/31 tests, Docs packages step printed "6 files, 0 problem(s)", 2026-11-18)
 
 ## Next slices
-1. Chore — bump GitHub Action versions; CI check that docs don't name packages missing from `package.json` (F-001)
-2. S7 — agent request freshness (timestamp window + nonce)
-3. S3 — label every simulated result in UI and README
-4. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
-5. S2 — move agent private keys out of the JSON state file
+1. S7 — agent request freshness (timestamp window + nonce)
+2. S3 — label every simulated result in UI and README
+3. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
+4. S2 — move agent private keys out of the JSON state file

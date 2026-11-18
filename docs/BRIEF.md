@@ -31,7 +31,7 @@ TODO (not set yet)
 | --- | --- | --- |
 | 2026-11-18 (local and CI green) | Demo builds and runs | `npm ci`, `npm run lint`, `npm run build` pass from a clean clone |
 | TODO | Walking skeleton deployed | App reachable at a staging URL, CI green |
-| 2026-11-18 (local; CI pending) | Server API protected | Mutating routes require a signed-in owner (SECURITY S1) |
+| 2026-11-18 (done; CI green, run 44259897748) | Server API protected | Mutating routes require a signed-in owner (SECURITY S1) |
 | TODO | Feature freeze | Only bug fixes and demo prep after this date |
 | TODO | Delivery | Everything in the deliverables list below is submitted |
 

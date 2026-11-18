@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test server/auth.test.ts"
+    "test": "tsx --test server/auth.test.ts scripts/check-doc-packages.test.ts",
+    "check:docs": "tsx scripts/check-doc-packages.ts"
   },
   "dependencies": {
     "@concordium/browser-wallet-api-helpers": "^3.3.0",
