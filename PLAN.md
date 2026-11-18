@@ -29,7 +29,7 @@ No API changes in this slice.
 - [x] Typecheck (`npm run lint`)
 - [x] Build (`npm run build`)
 - [x] Ran the app by hand, all tabs load
-- [ ] CI green on the branch (placeholder Test step dropped; needs a push)
+- [x] CI green on main (GitHub Actions run 44249437322, 2026-11-18; placeholder Test step dropped)
 - [x] `.claude/settings.json` deny rule: `Read(./.env.*)` → specific files (applied by the user)
 
 ## Next slices (from docs/SECURITY.md)
