@@ -149,7 +149,8 @@ export type WebhookEventType =
   | 'circuit_breaker.opened'
   | 'rate_limit.exceeded'
   | 'audit.tamper_detected'
-  | 'audit.anchored';
+  | 'audit.anchored'
+  | 'audit.anchor_verified';
 
 export interface WebhookConfig {
   id: string;
@@ -183,11 +184,35 @@ export interface OnchainAnchorRecord {
   totalEntries: number;
   /** null when nothing was signed (simulated-payload). */
   signerAddress: string | null;
-  /** A transaction hash only for browser-wallet-tx (reported by the wallet, not checked by the server). */
+  /** A transaction hash only for browser-wallet-tx; on chain only when `verification.status` is 'verified'. */
   txHash: string;
   network: 'testnet' | 'mainnet';
   mode: 'browser-wallet-tx' | 'wallet-signed-attestation' | 'simulated-payload';
   createdAt: string;
+  ownerAccount?: string | null;
+  expectedData?: string | null;
+  /** S10: server-side chain check (browser-wallet-tx only). Missing on older records. */
+  verification?: AnchorVerification | null;
+}
+
+export type AnchorVerificationStatus = 'verified' | 'unverified' | 'rejected';
+export type AnchorVerificationReason =
+  | 'not_found'
+  | 'not_final'
+  | 'unreachable'
+  | 'legacy_unchecked'
+  | 'sender_mismatch'
+  | 'data_mismatch'
+  | 'tx_failed'
+  | 'wrong_type';
+
+export interface AnchorVerification {
+  status: AnchorVerificationStatus;
+  reason: AnchorVerificationReason | null;
+  detail: string | null;
+  checkedAt: string | null;
+  attempts: number;
+  blockHash: string | null;
 }
 
 export interface OverviewMetrics {

@@ -140,7 +140,8 @@ export type WebhookEventType =
   | 'circuit_breaker.opened'
   | 'rate_limit.exceeded'
   | 'audit.tamper_detected'
-  | 'audit.anchored';
+  | 'audit.anchored'
+  | 'audit.anchor_verified';
 
 export interface WebhookConfig {
   id: string;
@@ -174,11 +175,41 @@ export interface OnchainAnchorRecord {
   totalEntries: number;
   /** null when nothing was signed (simulated-payload). */
   signerAddress: string | null;
-  /** A real transaction hash only for browser-wallet-tx (reported by the wallet, not checked by the server). */
+  /** A transaction hash only for browser-wallet-tx; it counts as on chain only when `verification.status` is 'verified'. */
   txHash: string;
   network: 'testnet' | 'mainnet';
   mode: 'browser-wallet-tx' | 'wallet-signed-attestation' | 'simulated-payload';
   createdAt: string;
+  /** S10: owner account from the session that created the anchor; the on-chain sender must equal it. */
+  ownerAccount?: string | null;
+  /** S10: hex of the RegisterData bytes the server expects on chain (browser-wallet-tx only). */
+  expectedData?: string | null;
+  /** S10: server-side chain check (browser-wallet-tx only; null for other modes). Missing on older records. */
+  verification?: AnchorVerification | null;
+}
+
+export type AnchorVerificationStatus = 'verified' | 'unverified' | 'rejected';
+export type AnchorVerificationReason =
+  | 'not_found'
+  | 'not_final'
+  | 'unreachable'
+  | 'legacy_unchecked'
+  | 'sender_mismatch'
+  | 'data_mismatch'
+  | 'tx_failed'
+  | 'wrong_type';
+
+export interface AnchorVerification {
+  status: AnchorVerificationStatus;
+  /** null while never checked, and when verified. */
+  reason: AnchorVerificationReason | null;
+  /** Sanitised one-line detail (no request data). */
+  detail: string | null;
+  checkedAt: string | null;
+  /** Number of verify requests that ran a lookup. */
+  attempts: number;
+  /** Block hash of the finalized block, when verified. */
+  blockHash: string | null;
 }
 
 export interface GatewayDatabase {

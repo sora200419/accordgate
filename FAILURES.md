@@ -31,6 +31,13 @@ Mishaps that forced rework, with the rule each one produced. Newest at the botto
 - **Rule destination**: project CLAUDE.md.
 - **Recurrences**: none.
 
+### F-005 · 2026-11-18 · Referee's working copies carried `.env` and a `node_modules` junction
+- **What happened**: During `harness-review` of S10, the referee subagent ran the mutation script against full copies of the project (robocopy into `scratchpad\repocopy` and `scratchpad\rc3`) so it could stay read-only. Both copies included the project `.env`, putting local secrets outside the repo. Each copy also held a directory junction to the real `node_modules`, so a recursive delete of the copy could have followed it and wiped the real dependencies. A hook blocked deleting the copied `.env`, so the user had to delete both folders by hand.
+- **Root cause**: missing information. My re-review prompt said "run it against a copy if you want to stay read-only" but never said what a copy must leave out. The mutation script only needs single-file backups, so a full copy was never necessary.
+- **Fix**: removed both junctions with `cmd /c rmdir` (link only) and confirmed the real `node_modules` was intact; the user deleted `rc3` and `repocopy`, and `Test-Path` confirms both are gone.
+- **Rule destination**: global ledger, merged into "Regression and rejection tests must first prove they catch the bug". Automation candidate (proposed to the user, not done): `~/.claude/hooks/harness/harness-guard.js` already denies copying a named `.env` file, but not a recursive directory copy (robocopy, xcopy /s, `cp -r`, `Copy-Item -Recurse`) whose source holds `.env*`.
+- **Recurrences**: none.
+
 ## Pruning log
 
 | Date | Action (delete / merge / automate / promote to global) | Entries | Notes |

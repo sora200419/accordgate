@@ -3,34 +3,34 @@
 <!-- Rewritten at the end of Plan Mode for every slice. After /clear, a new session continues with "@PLAN.md". -->
 
 ## Slice
-S3 — label every simulated result in UI, API responses, audit text and README. Branch `feat/s3-label-simulated`. Nothing becomes real in this slice.
+S10 — the server checks `browser-wallet-tx` anchors on Concordium testnet (gRPC `getBlockItemStatus`) before they count as on chain. Branch `feat/anchor-verify` (from `main` after PR #4).
 
 ## Decisions (made 2026-11-18)
-- Fake tx hashes get the prefix `sim_` (never `0x…`); invoices carry `simulated: true`; sponsor "account" is the literal `simulated-sponsor`
-- Anchors: ccdscan link only for `browser-wallet-tx`; audit decision `ONCHAIN_ANCHORED` only for that mode, otherwise `ANCHOR_NOT_ONCHAIN`; `browser-wallet-tx` is labelled "钱包上报，服务器未核验" (server-side gRPC check is a later slice)
-- "ZKP" stays as a name; every sentence claiming a zero-knowledge proof becomes "自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）" with a 模拟 badge; API header and field names unchanged
-- Agent registration, CIS-8 bindings and the sandbox step 01 trace say "local registry, not written to / not read from CIS-8004"
-- Seed: no invented addresses (`walletAddress: null` for EuroClear), seed audit reasons prefixed `[seed demo data]`
-- MCP `initialize` adds a `simulated` list
-- One shared `SimulatedBadge` component; no other abstraction
-
-## Inventory
-Full table with file positions: `C:\Users\ONG\.claude\plans\pasted-content-id-086d-plan-md-docs-sec-dapper-stream.md`. Items: 1 x402 settle hash, 2 seed invoices, 3 CIS-3 sponsor + gas, 4 `simulated-payload` anchor, 5 `wallet-signed-attestation` anchor, 6 unverified `browser-wallet-tx`, 7 ZKP wording, 8 agent registration, 8b sandbox step 01 trace, 9 seed addresses, 10 seed audit reasons, 11 MCP standards, 12 testnet probe fallback text.
+- `POST /api/anchors` only stores (status `unverified`, `attempts: 0`) and returns 201 at once; no gRPC call
+- Verification only in owner route `POST /api/anchors/:id/verify`; the frontend calls it right after creation, then every 4 s for about 60 s, plus a 重新核验 button
+- The anchor stores `ownerAccount` from the session at creation; verify compares the on-chain sender with that stored address, not the caller's session. Body `signerAddress` ≠ session account → simulated
+- Client sends `rootHash` + `auditRange`; the server requires `rootHash` to be an `entryHash` in its audit log and derives `expectedData` (hex of `accordgate:eu-ai-act:<range>:<rootHash>`) itself
+- Statuses: `verified` | `unverified` (reason `null`, `not_found`, `not_final`, `unreachable`, `legacy_unchecked`) | `rejected` (`sender_mismatch`, `data_mismatch`, `tx_failed`, `wrong_type`). Unknown and not-found stay separate. `verified` and `rejected` are terminal
+- Lookup: 3 attempts, 3 s timeout each, 300/600 ms delays; NOT_FOUND is retried too (load-balanced node may be stale)
+- Duplicate `txHash` (case-insensitive) → 409, checked and inserted synchronously
+- Concurrent verifies of one anchor share one in-flight promise and write once; exactly one `ONCHAIN_ANCHORED` audit entry per anchor, on the transition
+- Webhook `audit.anchored` at creation (`serverVerifiedOnChain: false`); `audit.anchor_verified` on the transition
 
 ## Steps
-- [x] Server: `sim_` hashes, sponsor literal, anchor defaults and decision, traces, MCP list, seed
-- [x] Client: `SimulatedBadge`, `anchorExplorerUrl`, wallet fallback without hard-coded signer, wording per inventory
-- [x] Tests in `server/auth.test.ts` (+ helper test), each proven to fail without the change
-- [x] Docs: SECURITY S3, README, BRIEF, DATA_MODEL, `index.html`, `metadata.json`; grep `0xccd`, `SPONSOR_FACILITATOR`, `零知识`, `Gasless`, `ONCHAIN_ANCHORED`
+- [x] `server/anchorVerify.ts` + `server/anchorVerify.test.ts`
+- [x] Server routes, auth helper, `OWNER_ROUTES`
+- [x] Route tests in `server/auth.test.ts`
+- [x] Client: `anchorDisplay`, ledger status + 重新核验, polling in `App.tsx`, `api.verifyAnchor`
+- [x] Docs: SECURITY S10, README, BRIEF, DATA_MODEL, CLAUDE.md; grep `服务器未核验`, `serverVerifiedOnChain`, `reportedOnChainByWallet`, `ONCHAIN_ANCHORED`, `not checked by the server`
+- [x] Review fixes: R1 webhook-test route re-reads state after its fetch; R2 client re-checks session + fresh root before sending, server says why a wallet claim was not accepted; R4/N1 errors shown to the user
 
 ## Verification gate
-- [x] `npm run lint`, `npm test` (64/64), `npm run check:docs`, `npm run build`
-- [x] Mutation proof (copies in the scratchpad, restored with `cp`, not git): (1) `main`'s `server.ts`, `server/store.ts`, `server/crypto.ts`, `server/types.ts` swapped in → the first 7 S3 tests fail with ERR_ASSERTION; (2) `anchorExplorerUrl` mode/hash guard removed → `src/anchorDisplay.test.ts` link test fails; (3) pre-review `server.ts` swapped in → the 4 review tests (failing step 01 wording, failed-ZKP wording, non-hex wallet hash, webhook payload) fail; restored → 64/64
-- [x] Browser (2026-11-18): five tabs in the preview pane, no console errors; owner flows in the user's Chrome (signed in; preview server run as `dev-system-ca` because AVG re-signs testnet TLS): reset → EuroClear `walletAddress: null`, detail renders without a wallet row; sandbox "合规放行 + 402" → 402 box with 模拟 badges → 模拟支付并重试 → HTTP 200 with simulated receipt and toast; anchor via API with no wallet data → `simulated-payload`, no signer, `sim_` hash, ledger row "—（无签名）" + 模拟, 0 CCDScan links, decision "存证 · 未上链". One console exception came from Chrome extension messaging ("message channel closed"), not app code
-- [x] `harness-review` passed (2 rounds: R1–R5, R7, R8, R10 fixed with tests; R6 mutation evidence + browser check; R9 documented)
+- [x] `npm run lint`, `npm test` (98/98), `npm run check:docs`, `npm run build`
+- [x] Mutation proof: 18 mutations (M1–M18) each make a named test fail; files restored from copies, sha checked
+- [x] `harness-review` PASS (2 rounds; R3, R5, R8 accepted with reasons in SECURITY/README)
+- [x] Real testnet RegisterData from the user's wallet (2026-11-18, tx `270ee8d4…083a`, preview run as `dev-system-ca`): stored `unverified`, `verified` on the 2nd poll (~5 s), one `ONCHAIN_ANCHORED`, ledger shows "服务器已核验，已最终确认" with the only CCDScan link, no console errors. Direct gRPC read: data is raw UTF-8 (no length prefix), sender base58 equals the session address (R6 not an issue here), unknown hash throws `NOT_FOUND`. Signed out, then 锚定 (user, 2026-11-19): no wallet pop-up, balance unchanged (19,995.91 CCD), POST refused 401 and the page showed "锚定未记录（Sign in with your Concordium wallet to make changes.）", so nothing was sent or stored. Still not exercised in the browser: the branch where the page still holds a wallet account but the server session has expired (`authMe` mismatch)
 - [ ] CI green on the PR
 
 ## Next slices
-1. Verify `browser-wallet-tx` anchors on the server (gRPC `getBlockItemStatus`) before showing them as on-chain
-2. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
-3. S2 — move agent private keys out of the JSON state file
+1. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
+2. S2 — move agent private keys out of the JSON state file

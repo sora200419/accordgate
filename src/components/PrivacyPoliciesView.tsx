@@ -43,7 +43,8 @@ const ALL_WEBHOOK_EVENTS: Array<{ id: WebhookEventType; label: string }> = [
   { id: 'agent.cascade_revoked', label: '级联吊销' },
   { id: 'rate_limit.exceeded', label: 'QPM 限流' },
   { id: 'audit.tamper_detected', label: '链篡改警报' },
-  { id: 'audit.anchored', label: 'Testnet 锚定' },
+  { id: 'audit.anchored', label: 'Testnet 锚定（提交）' },
+  { id: 'audit.anchor_verified', label: 'Testnet 锚定（服务器已核验）' },
 ];
 
 export function PrivacyPoliciesView({

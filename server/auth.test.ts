@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import type { Server } from 'node:http';
-import { AccountAddress, buildBasicAccountSigner, signMessage } from '@concordium/web-sdk';
+import { AccountAddress, BlockHash, buildBasicAccountSigner, signMessage } from '@concordium/web-sdk';
 import { AccountNotFoundError, CHALLENGE_TTL_MS, OWNER_ROUTES, SESSION_TTL_MS } from './auth.ts';
 import type { AccountInfoLookup } from './auth.ts';
 
@@ -54,7 +54,7 @@ type CreateApp = typeof import('../server.ts').createApp;
 let createApp: CreateApp;
 let resetDatabase: () => unknown;
 
-async function startApp(ownerAccounts: string[], extra: { agentNoncePerAgentCap?: number } = {}) {
+async function startApp(ownerAccounts: string[], extra: Partial<Parameters<CreateApp>[0]> = {}) {
   const app = createApp({ ownerAccounts, getAccountInfo: fakeLookup, now: () => clock, ...extra });
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -124,15 +124,23 @@ function cookieFrom(setCookie: string | null): string {
   return setCookie.split(';')[0];
 }
 
-async function signIn(base: string): Promise<string> {
-  const ch = await challenge(base);
+async function signIn(base: string, as = owner): Promise<string> {
+  const ch = await challenge(base, as);
   assert.equal(ch.status, 200);
-  const signature = await sign(ch.json.message);
+  const signature = await sign(ch.json.message, as, as);
   const v = await call(base, 'POST', '/api/auth/verify', {
-    body: { accountAddress: owner.base58, nonce: ch.json.nonce, signature },
+    body: { accountAddress: as.base58, nonce: ch.json.nonce, signature },
   });
   assert.equal(v.status, 200, JSON.stringify(v.json));
   return cookieFrom(v.setCookie);
+}
+
+/** S10: the newest audit entry's hash and the range text the browser client builds for it. */
+async function latestRoot(base: string): Promise<{ rootHash: string; auditRange: string }> {
+  const logs = (await call(base, 'GET', '/api/audit')).json.logs;
+  const newest = logs.reduce((a: any, b: any) => (b.seq > a.seq ? b : a));
+  const oldest = logs.reduce((a: any, b: any) => (b.seq < a.seq ? b : a));
+  return { rootHash: newest.entryHash, auditRange: `#${oldest.seq}-#${newest.seq}` };
 }
 
 function concretePath(p: string) {
@@ -785,11 +793,12 @@ describe('S3: simulated results are labelled as simulated', () => {
     assert.match(res.json.anchor.txHash, SIM_HASH);
   });
 
-  test('only browser-wallet-tx is ONCHAIN_ANCHORED; an attestation is not', async () => {
+  test('creating an anchor is never ONCHAIN_ANCHORED (S10: only a server-verified tx is); an attestation is not either', async () => {
     const signer = owner.base58;
+    const root = await latestRoot(ctx.base);
     const tx = await call(ctx.base, 'POST', '/api/anchors', {
       cookie,
-      body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32) },
+      body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32), ...root },
     });
     const att = await call(ctx.base, 'POST', '/api/anchors', {
       cookie,
@@ -799,8 +808,8 @@ describe('S3: simulated results are labelled as simulated', () => {
     assert.equal(att.json.anchor.mode, 'wallet-signed-attestation');
     const logs = (await call(ctx.base, 'GET', '/api/audit')).json.logs;
     const byHash = (h: string) => logs.find((l: any) => l.x402ReceiptId === h);
-    assert.equal(byHash('ab'.repeat(32)).decision, 'ONCHAIN_ANCHORED');
-    assert.match(byHash('ab'.repeat(32)).reason, /not checked by the server/);
+    assert.equal(byHash('ab'.repeat(32)).decision, 'ANCHOR_NOT_ONCHAIN');
+    assert.match(byHash('ab'.repeat(32)).reason, /not on chain until the server verifies it/);
     assert.equal(byHash('cd'.repeat(32)).decision, 'ANCHOR_NOT_ONCHAIN');
   });
 
@@ -867,7 +876,10 @@ describe('S3: simulated results are labelled as simulated', () => {
       const signer = owner.base58;
       await call(ctx.base, 'POST', '/api/anchors', { cookie, body: {} });
       await call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'wallet-signed-attestation', signerAddress: signer, txHash: 'cd'.repeat(32) } });
-      await call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32) } });
+      await call(ctx.base, 'POST', '/api/anchors', {
+        cookie,
+        body: { mode: 'browser-wallet-tx', signerAddress: signer, txHash: 'ab'.repeat(32), ...(await latestRoot(ctx.base)) },
+      });
       const deadline = Date.now() + 5000;
       while (bodies.length < 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
       assert.equal(bodies.length, 3, 'three webhook deliveries');
@@ -908,5 +920,400 @@ describe('S3: simulated results are labelled as simulated', () => {
       if (inv.txHash) assert.match(inv.txHash, SIM_HASH);
     }
     for (const entry of db.auditLogs) assert.match(entry.reason, /^\[seed demo data\]/);
+  });
+});
+
+describe('S10: browser-wallet-tx anchors are verified on chain by the server', () => {
+  let ctx: Awaited<ReturnType<typeof startApp>>;
+  // Each tx hash answers from its own script: one entry per lookup, the last one repeats.
+  const scripts = new Map<string, any[]>();
+  const lookups = new Map<string, number>();
+  let gate: Promise<void> | null = null;
+  const lookupCount = (h: string) => lookups.get(h) ?? 0;
+  const totalLookups = () => [...lookups.values()].reduce((a, b) => a + b, 0);
+
+  const fakeBlockItemStatus = async (txHash: string) => {
+    const n = lookupCount(txHash);
+    lookups.set(txHash, n + 1);
+    if (gate) await gate;
+    const steps = scripts.get(txHash) ?? ['notfound'];
+    const step = steps[Math.min(n, steps.length - 1)];
+    if (step === 'notfound') return undefined;
+    if (step === 'error') throw new Error('UNAVAILABLE: connect ECONNREFUSED');
+    return step;
+  };
+
+  // A finalized RegisterData by `sender` carrying the payload the browser wallet builds.
+  const finalizedTx = (root: { rootHash: string; auditRange: string }, sender = owner, dataOverride?: string) => ({
+    status: 'finalized',
+    outcome: {
+      blockHash: BlockHash.fromHexString('ef'.repeat(32)),
+      summary: {
+        type: 'accountTransaction',
+        transactionType: 'registerData',
+        sender: sender.address,
+        dataRegistered: {
+          tag: 'DataRegistered',
+          data: dataOverride ?? Buffer.from(`accordgate:eu-ai-act:${root.auditRange}:${root.rootHash}`, 'utf8').toString('hex'),
+        },
+      },
+    },
+  });
+
+  before(async () => {
+    clock = FIXED_START;
+    ctx = await startApp([owner.base58, stranger.base58], {
+      getBlockItemStatus: fakeBlockItemStatus as any,
+      anchorCheck: { sleep: async () => {} },
+    });
+  });
+  after(() => ctx.server.close());
+  beforeEach(() => {
+    scripts.clear();
+    lookups.clear();
+    gate = null;
+  });
+
+  let txSeq = 0;
+  const newTx = () => (++txSeq).toString(16).padStart(64, '0');
+
+  async function createTxAnchor(cookie: string, txHash: string, signer = owner) {
+    const root = await latestRoot(ctx.base);
+    const res = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'browser-wallet-tx', signerAddress: signer.base58, txHash, ...root },
+    });
+    return { res, root };
+  }
+  const verify = (cookie: string, id: string) => call(ctx.base, 'POST', `/api/anchors/${id}/verify`, { cookie });
+  const auditFor = async (txHash: string) =>
+    (await call(ctx.base, 'GET', '/api/audit')).json.logs.filter((l: any) => l.x402ReceiptId === txHash);
+  const waitForLookup = async (txHash: string) => {
+    for (let i = 0; i < 100 && lookupCount(txHash) === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(lookupCount(txHash) > 0, 'lookup started');
+  };
+
+  test('POST /api/anchors only stores: no chain lookup, unverified, attempts 0, not ONCHAIN_ANCHORED', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res } = await createTxAnchor(cookie, tx);
+    assert.equal(res.status, 201, JSON.stringify(res.json));
+    assert.equal(totalLookups(), 0);
+    assert.equal(res.json.anchor.mode, 'browser-wallet-tx');
+    const v = res.json.anchor.verification;
+    assert.deepEqual([v.status, v.reason, v.attempts], ['unverified', null, 0]);
+    assert.equal(res.json.anchor.ownerAccount, owner.base58);
+    const entries = await auditFor(tx);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].decision, 'ANCHOR_NOT_ONCHAIN');
+  });
+
+  test('verify: finalized, right sender, right data → verified; exactly one ONCHAIN_ANCHORED; rechecks do no lookup', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    scripts.set(tx, [finalizedTx(root)]);
+    const v = await verify(cookie, res.json.anchor.id);
+    assert.equal(v.status, 200, JSON.stringify(v.json));
+    assert.equal(v.json.anchor.verification.status, 'verified');
+    assert.equal(v.json.anchor.verification.blockHash, 'ef'.repeat(32));
+    assert.equal(v.json.anchor.verification.attempts, 1);
+    assert.equal(v.json.anchor.verification.checkedAt, new Date(clock).toISOString());
+    scripts.set(tx, ['error']);
+    const again = await verify(cookie, res.json.anchor.id);
+    assert.equal(again.json.anchor.verification.status, 'verified', 'a later failing lookup never downgrades');
+    assert.equal(lookupCount(tx), 1);
+    const onchain = (await auditFor(tx)).filter((e: any) => e.decision === 'ONCHAIN_ANCHORED');
+    assert.equal(onchain.length, 1);
+    assert.match(onchain[0].reason, /server checked/);
+  });
+
+  test('tx that does not exist → unverified/not_found after 3 lookups; a later verify after finalization → verified', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    const v = await verify(cookie, res.json.anchor.id);
+    assert.deepEqual([v.json.anchor.verification.status, v.json.anchor.verification.reason], ['unverified', 'not_found']);
+    assert.equal(lookupCount(tx), 3);
+    assert.equal((await auditFor(tx)).filter((e: any) => e.decision === 'ONCHAIN_ANCHORED').length, 0);
+    scripts.set(tx, [finalizedTx(root)]);
+    const later = await verify(cookie, res.json.anchor.id);
+    assert.equal(later.json.anchor.verification.status, 'verified');
+    assert.equal(later.json.anchor.verification.attempts, 2);
+  });
+
+  test('received / committed → unverified/not_final', async () => {
+    const cookie = await signIn(ctx.base);
+    for (const item of [{ status: 'received' }, { status: 'committed', outcomes: [] }]) {
+      const tx = newTx();
+      const { res } = await createTxAnchor(cookie, tx);
+      scripts.set(tx, [item]);
+      const v = await verify(cookie, res.json.anchor.id);
+      assert.deepEqual([v.json.anchor.verification.status, v.json.anchor.verification.reason], ['unverified', 'not_final']);
+    }
+  });
+
+  test('gRPC unreachable → unverified/unreachable (not not_found), then retryable', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    scripts.set(tx, ['error']);
+    const v = await verify(cookie, res.json.anchor.id);
+    assert.deepEqual([v.json.anchor.verification.status, v.json.anchor.verification.reason], ['unverified', 'unreachable']);
+    assert.match(v.json.anchor.verification.detail, /UNAVAILABLE/);
+    scripts.set(tx, [finalizedTx(root)]);
+    assert.equal((await verify(cookie, res.json.anchor.id)).json.anchor.verification.status, 'verified');
+  });
+
+  test('data mismatch → rejected, one rejection audit entry, terminal (no further lookup)', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    scripts.set(tx, [finalizedTx(root, owner, Buffer.from('something else').toString('hex'))]);
+    const v = await verify(cookie, res.json.anchor.id);
+    assert.deepEqual([v.json.anchor.verification.status, v.json.anchor.verification.reason], ['rejected', 'data_mismatch']);
+    scripts.set(tx, [finalizedTx(root)]);
+    const again = await verify(cookie, res.json.anchor.id);
+    assert.equal(again.json.anchor.verification.status, 'rejected');
+    assert.equal(lookupCount(tx), 1);
+    const entries = await auditFor(tx);
+    assert.equal(entries.filter((e: any) => /rejected by server check \(data_mismatch\)/.test(e.reason)).length, 1);
+    assert.equal(entries.filter((e: any) => e.decision === 'ONCHAIN_ANCHORED').length, 0);
+  });
+
+  test('sender is compared with the owner stored at creation, not with the owner who clicks verify', async () => {
+    const ownerCookie = await signIn(ctx.base, owner);
+    const otherCookie = await signIn(ctx.base, stranger);
+    // Created by owner, chain says owner sent it, verified by the other owner → verified.
+    const tx1 = newTx();
+    const a1 = await createTxAnchor(ownerCookie, tx1);
+    scripts.set(tx1, [finalizedTx(a1.root, owner)]);
+    assert.equal((await verify(otherCookie, a1.res.json.anchor.id)).json.anchor.verification.status, 'verified');
+    // Created by owner, chain says the other owner sent it, verified by that other owner → sender_mismatch.
+    const tx2 = newTx();
+    const a2 = await createTxAnchor(ownerCookie, tx2);
+    scripts.set(tx2, [finalizedTx(a2.root, stranger)]);
+    const v2 = await verify(otherCookie, a2.res.json.anchor.id);
+    assert.deepEqual([v2.json.anchor.verification.status, v2.json.anchor.verification.reason], ['rejected', 'sender_mismatch']);
+  });
+
+  test('body signerAddress that is not the session owner → simulated', async () => {
+    const cookie = await signIn(ctx.base, owner);
+    const tx = newTx();
+    const { res } = await createTxAnchor(cookie, tx, stranger);
+    assert.equal(res.json.anchor.mode, 'simulated-payload');
+    assert.equal(res.json.anchor.signerAddress, null);
+    assert.equal(res.json.anchor.verification, null);
+    // R2: the wallet may have sent a real transaction: say why it was not accepted, never "nothing sent".
+    assert.equal(res.json.notAccepted, 'signer is not the signed-in owner');
+    const entry = (await call(ctx.base, 'GET', '/api/audit')).json.logs.find((l: any) => l.x402ReceiptId === res.json.anchor.txHash);
+    assert.match(entry.reason, new RegExp(`Wallet reported a RegisterData transaction \\(${tx.slice(0, 14)}`));
+    assert.match(entry.reason, /may still have been sent/);
+    assert.doesNotMatch(entry.reason, /nothing signed or sent/);
+  });
+
+  test('R2: an anchor with no wallet claim keeps the plain simulated wording and notAccepted null', async () => {
+    const cookie = await signIn(ctx.base);
+    const res = await call(ctx.base, 'POST', '/api/anchors', { cookie, body: {} });
+    assert.equal(res.json.notAccepted, null);
+    const entry = (await call(ctx.base, 'GET', '/api/audit')).json.logs.find((l: any) => l.x402ReceiptId === res.json.anchor.txHash);
+    assert.match(entry.reason, /nothing signed or sent/);
+  });
+
+  test('rootHash the server does not hold, or a range not ending at it → simulated', async () => {
+    const cookie = await signIn(ctx.base);
+    const root = await latestRoot(ctx.base);
+    const unknown = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'browser-wallet-tx', signerAddress: owner.base58, txHash: newTx(), rootHash: '00'.repeat(32), auditRange: root.auditRange },
+    });
+    assert.equal(unknown.json.anchor.mode, 'simulated-payload');
+    assert.equal(unknown.json.notAccepted, 'root hash or range does not match the server audit log');
+    const badRange = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'browser-wallet-tx', signerAddress: owner.base58, txHash: newTx(), rootHash: root.rootHash, auditRange: '#1-#999999' },
+    });
+    assert.equal(badRange.json.anchor.mode, 'simulated-payload');
+  });
+
+  test('duplicate txHash → 409 with the existing id; upper-case variant too; one record, one audit entry', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = 'ab'.repeat(32);
+    const first = await createTxAnchor(cookie, tx);
+    assert.equal(first.res.status, 201);
+    const dup = await createTxAnchor(cookie, tx);
+    assert.equal(dup.res.status, 409);
+    assert.equal(dup.res.json.anchorId, first.res.json.anchor.id);
+    const upper = await createTxAnchor(cookie, tx.toUpperCase());
+    assert.equal(upper.res.status, 409);
+    const anchors = (await call(ctx.base, 'GET', '/api/anchors')).json.anchors.filter((a: any) => a.txHash === tx);
+    assert.equal(anchors.length, 1);
+    assert.equal((await auditFor(tx)).length, 1);
+  });
+
+  test('20 concurrent posts of one txHash → one 201, nineteen 409', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const root = await latestRoot(ctx.base);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        call(ctx.base, 'POST', '/api/anchors', { cookie, body: { mode: 'browser-wallet-tx', signerAddress: owner.base58, txHash: tx, ...root } }),
+      ),
+    );
+    assert.equal(results.filter((r) => r.status === 201).length, 1);
+    assert.equal(results.filter((r) => r.status === 409).length, 19);
+  });
+
+  test('two concurrent verifies of one anchor → one lookup run, one result written, one ONCHAIN_ANCHORED', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    scripts.set(tx, [finalizedTx(root)]);
+    let release!: () => void;
+    gate = new Promise<void>((r) => (release = r));
+    const p1 = verify(cookie, res.json.anchor.id);
+    const p2 = verify(cookie, res.json.anchor.id);
+    await waitForLookup(tx);
+    // Give the second request time to reach the server while the first lookup is still held.
+    await new Promise((r) => setTimeout(r, 100));
+    release();
+    const [v1, v2] = await Promise.all([p1, p2]);
+    assert.equal(v1.json.anchor.verification.status, 'verified');
+    assert.equal(v2.json.anchor.verification.status, 'verified');
+    assert.equal(lookupCount(tx), 1);
+    assert.equal(v1.json.anchor.verification.attempts, 1);
+    assert.equal(v2.json.anchor.verification.attempts, 1);
+    assert.equal((await auditFor(tx)).filter((e: any) => e.decision === 'ONCHAIN_ANCHORED').length, 1);
+  });
+
+  test('anchor removed (sandbox reset) while a verify is in flight → 404, nothing written back', async () => {
+    const cookie = await signIn(ctx.base);
+    const tx = newTx();
+    const { res, root } = await createTxAnchor(cookie, tx);
+    scripts.set(tx, [finalizedTx(root)]);
+    let release!: () => void;
+    gate = new Promise<void>((r) => (release = r));
+    const pending = verify(cookie, res.json.anchor.id);
+    await waitForLookup(tx);
+    assert.equal((await call(ctx.base, 'POST', '/api/sandbox/reset', { cookie })).status, 200);
+    release();
+    const v = await pending;
+    assert.equal(v.status, 404);
+    assert.equal((await call(ctx.base, 'GET', '/api/anchors')).json.anchors.length, 0);
+    assert.equal((await auditFor(tx)).length, 0);
+  });
+
+  test('verify on simulated / attestation anchors and on legacy records does no lookup', async () => {
+    const cookie = await signIn(ctx.base);
+    const sim = await call(ctx.base, 'POST', '/api/anchors', { cookie, body: {} });
+    const att = await call(ctx.base, 'POST', '/api/anchors', {
+      cookie,
+      body: { mode: 'wallet-signed-attestation', signerAddress: owner.base58, txHash: 'cd'.repeat(32) },
+    });
+    for (const a of [sim, att]) {
+      const v = await verify(cookie, a.json.anchor.id);
+      assert.equal(v.status, 200);
+      assert.equal(v.json.anchor.verification, null);
+    }
+    // A record stored before S10: no verification, no expected data.
+    const { loadDatabase, saveDatabase } = await import('./store.ts');
+    const db = loadDatabase();
+    db.onchainAnchors.unshift({
+      id: 'anc-legacy1',
+      rootHash: '11'.repeat(32),
+      auditRange: '#1 — #3',
+      totalEntries: 3,
+      signerAddress: owner.base58,
+      txHash: '22'.repeat(32),
+      network: 'testnet',
+      mode: 'browser-wallet-tx',
+      createdAt: new Date(clock).toISOString(),
+    });
+    saveDatabase(db);
+    const legacy = await verify(cookie, 'anc-legacy1');
+    assert.deepEqual([legacy.json.anchor.verification.status, legacy.json.anchor.verification.reason], ['unverified', 'legacy_unchecked']);
+    const listed = (await call(ctx.base, 'GET', '/api/anchors')).json.anchors.find((a: any) => a.id === 'anc-legacy1');
+    assert.equal(listed.verification.reason, 'legacy_unchecked');
+    assert.equal(totalLookups(), 0);
+  });
+
+  test('R1: a webhook test that is slow to answer does not undo a verify that finished meanwhile', async () => {
+    let releaseHook!: () => void;
+    const hookHeld = new Promise<void>((r) => (releaseHook = r));
+    let hookHit = false;
+    const receiver = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', async () => {
+        hookHit = true;
+        await hookHeld;
+        res.end('ok');
+      });
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const cookie = await signIn(ctx.base);
+      const url = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/hook`;
+      const wh = await call(ctx.base, 'POST', '/api/webhooks', { cookie, body: { label: 'slow', url, enabledEvents: ['agent.revoked'] } });
+      assert.equal(wh.status, 201, JSON.stringify(wh.json));
+      const tx = newTx();
+      const { res, root } = await createTxAnchor(cookie, tx);
+      scripts.set(tx, [finalizedTx(root)]);
+      // The webhook test loads the state, then waits on the slow receiver.
+      const pingPending = call(ctx.base, 'POST', `/api/webhooks/${wh.json.webhook.id}/test`, { cookie });
+      for (let i = 0; i < 100 && !hookHit; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.ok(hookHit, 'webhook receiver got the ping');
+      const v = await verify(cookie, res.json.anchor.id);
+      assert.equal(v.json.anchor.verification.status, 'verified');
+      releaseHook();
+      const ping = await pingPending;
+      assert.equal(ping.status, 200);
+      assert.equal(ping.json.delivery.ok, true);
+      const stored = (await call(ctx.base, 'GET', '/api/anchors')).json.anchors.find((a: any) => a.id === res.json.anchor.id);
+      assert.equal(stored.verification.status, 'verified', 'the slow webhook test must not write back a stale anchor');
+      assert.equal((await auditFor(tx)).filter((e: any) => e.decision === 'ONCHAIN_ANCHORED').length, 1);
+      const hooks = (await call(ctx.base, 'GET', '/api/webhooks')).json.webhooks;
+      assert.equal(hooks.find((h: any) => h.id === wh.json.webhook.id).lastStatusCode, 200);
+    } finally {
+      releaseHook();
+      await new Promise((r) => receiver.close(r));
+    }
+  });
+
+  test('verify on an unknown id → 404', async () => {
+    const cookie = await signIn(ctx.base);
+    assert.equal((await verify(cookie, 'anc-nope')).status, 404);
+  });
+
+  test('audit.anchor_verified webhook fires once, with serverVerifiedOnChain true', async () => {
+    const bodies: any[] = [];
+    const receiver = http.createServer((req, res) => {
+      let data = '';
+      req.on('data', (c) => (data += c));
+      req.on('end', () => {
+        bodies.push(JSON.parse(data));
+        res.end('ok');
+      });
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const cookie = await signIn(ctx.base);
+      const url = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/hook`;
+      const wh = await call(ctx.base, 'POST', '/api/webhooks', { cookie, body: { label: 's10', url, enabledEvents: ['audit.anchor_verified'] } });
+      assert.equal(wh.status, 201, JSON.stringify(wh.json));
+      const tx = newTx();
+      const { res, root } = await createTxAnchor(cookie, tx);
+      scripts.set(tx, [finalizedTx(root)]);
+      await verify(cookie, res.json.anchor.id);
+      await verify(cookie, res.json.anchor.id);
+      const deadline = Date.now() + 3000;
+      while (bodies.length < 1 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(bodies.length, 1);
+      assert.equal(bodies[0].event, 'audit.anchor_verified');
+      assert.equal(bodies[0].payload.serverVerifiedOnChain, true);
+      assert.equal(bodies[0].payload.txHash, tx);
+    } finally {
+      await new Promise((r) => receiver.close(r));
+    }
   });
 });

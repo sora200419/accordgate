@@ -4,11 +4,13 @@ import dns from 'node:dns/promises';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AccountAddress, ContractAddress } from '@concordium/web-sdk';
+import { AccountAddress, ContractAddress, TransactionHash } from '@concordium/web-sdk';
 import { ConcordiumGRPCNodeClient, credentials } from '@concordium/web-sdk/nodejs';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { AccountNotFoundError, createAuth, parseOwnerAccounts } from './server/auth.ts';
+import { AccountNotFoundError, createAuth, describeError, parseOwnerAccounts } from './server/auth.ts';
+import { anchorPayloadHex, verifyAnchorTx } from './server/anchorVerify.ts';
+import type { AnchorCheckOptions, BlockItemStatusLookup } from './server/anchorVerify.ts';
 import type { AccountInfoLookup } from './server/auth.ts';
 import { createAgentReplayGuard, DEFAULT_PER_AGENT_CAP } from './server/agentFreshness.ts';
 import type { AgentReplayGuard } from './server/agentFreshness.ts';
@@ -37,6 +39,7 @@ import type {
   GatePolicy,
   GatewayDatabase,
   GatewayProtocol,
+  AnchorVerification,
   OnchainAnchorRecord,
   PipelineStepTrace,
   SandboxClaimInput,
@@ -1033,6 +1036,31 @@ const getTestnetAccountInfo: AccountInfoLookup = async (address) => {
   }
 };
 
+/** S10: reads a transaction's status from Concordium testnet; undefined when the node does not know it. */
+const getTestnetBlockItemStatus: BlockItemStatusLookup = async (txHashHex) => {
+  const client = createTestnetGrpcClient();
+  try {
+    return await client.getBlockItemStatus(TransactionHash.fromHexString(txHashHex));
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === 'NOT_FOUND') return undefined;
+    throw err;
+  }
+};
+
+/** Used when no chain lookup is configured (tests that do not pass one): every check is "unknown". */
+const chainLookupNotConfigured: BlockItemStatusLookup = async () => {
+  throw new Error('Chain lookup not configured');
+};
+
+const UNCHECKED: AnchorVerification = { status: 'unverified', reason: null, detail: null, checkedAt: null, attempts: 0, blockHash: null };
+
+/** Older browser-wallet-tx records have no verification and no expected data; they stay unchecked. */
+function anchorView(a: OnchainAnchorRecord): OnchainAnchorRecord {
+  if (a.mode !== 'browser-wallet-tx') return { ...a, verification: null };
+  if (a.verification) return a;
+  return { ...a, verification: { ...UNCHECKED, reason: 'legacy_unchecked', detail: 'Stored before server-side checks; cannot be checked.' } };
+}
+
 function maskWebhookSecret(wh: WebhookConfig): WebhookConfig {
   const secret = wh.signingSecretPreview || '';
   return { ...wh, signingSecretPreview: secret ? `whsec_…${secret.slice(-4)}` : '' };
@@ -1045,6 +1073,10 @@ export interface AppDeps {
   secureCookie?: boolean;
   /** Max unexpired nonces per agent (S7); tests set it low. */
   agentNoncePerAgentCap?: number;
+  /** S10: transaction status lookup for anchor verification (testnet gRPC in startServer). */
+  getBlockItemStatus?: BlockItemStatusLookup;
+  /** S10: retry/timeout settings for anchor verification; tests pass a no-op sleep. */
+  anchorCheck?: AnchorCheckOptions;
 }
 
 /** Builds the Express app with all /api routes (no Vite, no listen) so tests can run it. */
@@ -1984,10 +2016,16 @@ export function createApp(deps: AppDeps) {
       detail = err instanceof Error ? err.message : 'Request failed';
     }
 
+    // S10 review R1: re-read after the await and change only this webhook and the delivery log,
+    // so a stale copy never undoes what other requests (e.g. an anchor verify) saved meanwhile.
+    const latestDb = loadDatabase();
+    const latestWh = latestDb.webhooks.find((w) => w.id === wh.id);
     const deliveredAt = new Date().toISOString();
-    wh.lastStatusCode = statusCode ?? 0;
-    wh.lastDeliveredAt = deliveredAt;
-    wh.updatedAt = deliveredAt;
+    if (latestWh) {
+      latestWh.lastStatusCode = statusCode ?? 0;
+      latestWh.lastDeliveredAt = deliveredAt;
+      latestWh.updatedAt = deliveredAt;
+    }
 
     const delivery = {
       id: 'del-' + crypto.randomUUID().slice(0, 8),
@@ -2000,74 +2038,117 @@ export function createApp(deps: AppDeps) {
       detail,
       deliveredAt,
     };
-    db.webhookDeliveries.unshift(delivery);
-    db.webhookDeliveries = db.webhookDeliveries.slice(0, 25);
-    saveDatabase(db);
-    res.json({ delivery, webhook: wh });
+    latestDb.webhookDeliveries.unshift(delivery);
+    latestDb.webhookDeliveries = latestDb.webhookDeliveries.slice(0, 25);
+    saveDatabase(latestDb);
+    res.json({ delivery, webhook: maskWebhookSecret(latestWh ?? wh) });
   });
 
   // Concordium On-Chain Audit Root Anchors
   app.get('/api/anchors', (_req, res) => {
     const db = loadDatabase();
-    res.json({ anchors: db.onchainAnchors ?? [] });
+    res.json({ anchors: (db.onchainAnchors ?? []).map(anchorView) });
   });
 
-  app.post('/api/anchors', (req, res) => {
-    const { signerAddress, txHash, mode } = req.body ?? {};
-    const db = loadDatabase();
-    const latestEntry = db.auditLogs[db.auditLogs.length - 1];
-    const rootHash = latestEntry?.entryHash ?? '0'.repeat(64);
-    const auditRange = latestEntry ? `#1 — #${latestEntry.seq}` : '#0';
-    // SECURITY S3: a wallet mode counts only with a signer and a 64-hex hash (a Concordium tx hash
-    // or a SHA-256 signature digest); anything else is stored as simulated, with no signer and a
-    // `sim_` hash. browser-wallet-tx is the wallet's report and is not looked up on chain by the server.
-    const claimedSigner = typeof signerAddress === 'string' ? signerAddress.trim() : '';
-    const claimedHash = typeof txHash === 'string' ? txHash.trim() : '';
-    const anchorMode: OnchainAnchorRecord['mode'] =
-      (mode === 'browser-wallet-tx' || mode === 'wallet-signed-attestation') &&
-      claimedSigner &&
-      /^[0-9a-f]{64}$/i.test(claimedHash)
-        ? mode
-        : 'simulated-payload';
-    const simulatedAnchor = anchorMode === 'simulated-payload';
-    const onChain = anchorMode === 'browser-wallet-tx';
-    const anchor: OnchainAnchorRecord = {
-      id: 'anc-' + crypto.randomUUID().slice(0, 8),
-      rootHash,
-      auditRange,
-      totalEntries: db.auditLogs.length,
-      signerAddress: simulatedAnchor ? null : claimedSigner,
-      txHash: simulatedAnchor ? generateSimulatedTxHash(rootHash + Date.now()) : claimedHash,
-      network: 'testnet',
-      mode: anchorMode,
-      createdAt: new Date().toISOString(),
-    };
-    db.onchainAnchors.unshift(anchor);
-    const anchorReason = onChain
-      ? `Anchored EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange} on Concordium Testnet via RegisterData (tx reported by the wallet, not checked by the server).`
-      : anchorMode === 'wallet-signed-attestation'
-        ? `Wallet signed the EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; signature digest only, not on chain.`
-        : `Simulated anchor of EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; nothing signed or sent to the chain.`;
-
+  function appendAnchorAudit(db: GatewayDatabase, anchor: OnchainAnchorRecord, decision: 'ONCHAIN_ANCHORED' | 'ANCHOR_NOT_ONCHAIN', reason: string) {
     appendAuditEntryToDb(db, {
       requestId: 'anc-' + crypto.randomUUID().slice(0, 8),
       agentDid: 'did:ccd:audit-anchorer',
       agentName: 'Concordium Anchor Service',
       endpointPath: '/registry/concordium-anchor',
       protocol: 'GOVERNANCE',
-      decision: onChain ? 'ONCHAIN_ANCHORED' : 'ANCHOR_NOT_ONCHAIN',
-      reason: anchorReason,
+      decision,
+      reason,
       zkpClaims: {
         principalVerified: true,
         ageThresholdMet: true,
         jurisdictionMatched: true,
         vcdcMatched: true,
-        zkpCommitment: rootHash,
+        zkpCommitment: anchor.rootHash,
         piiStored: false,
       },
       x402ReceiptId: anchor.txHash,
       amountPlt: 0,
     });
+  }
+
+  // S10: POST only stores; nothing here talks to the chain. Verification is POST /api/anchors/:id/verify.
+  app.post('/api/anchors', (req, res) => {
+    const { signerAddress, txHash, mode, rootHash: claimedRoot, auditRange: claimedRange } = req.body ?? {};
+    const sessionOwner = auth.ownerAccountOf(req);
+    const db = loadDatabase();
+    const latestEntry = db.auditLogs[db.auditLogs.length - 1];
+    // SECURITY S3: a wallet mode counts only with a signer and a 64-hex hash (a Concordium tx hash
+    // or a SHA-256 signature digest); anything else is stored as simulated, with no signer and a
+    // `sim_` hash. S10: the signer must be the signed-in owner (taken from the session).
+    const claimedSigner = typeof signerAddress === 'string' ? signerAddress.trim() : '';
+    const claimedHash = typeof txHash === 'string' ? txHash.trim().toLowerCase() : '';
+    const walletSigned =
+      (mode === 'browser-wallet-tx' || mode === 'wallet-signed-attestation') &&
+      !!sessionOwner &&
+      claimedSigner === sessionOwner &&
+      /^[0-9a-f]{64}$/.test(claimedHash);
+    // S10: a transaction anchor must name an audit entry the server holds, and a range that ends at it,
+    // so the server can derive the exact bytes the wallet registered.
+    const rootEntry = typeof claimedRoot === 'string' ? db.auditLogs.find((e) => e.entryHash === claimedRoot) : undefined;
+    const rangeOk =
+      !!rootEntry && typeof claimedRange === 'string' && /^#\d{1,9}-#\d{1,9}$/.test(claimedRange) && claimedRange.endsWith(`-#${rootEntry.seq}`);
+    const anchorMode: OnchainAnchorRecord['mode'] =
+      walletSigned && mode === 'browser-wallet-tx' && rangeOk
+        ? 'browser-wallet-tx'
+        : walletSigned && mode === 'wallet-signed-attestation'
+          ? 'wallet-signed-attestation'
+          : 'simulated-payload';
+    const simulatedAnchor = anchorMode === 'simulated-payload';
+    const isTx = anchorMode === 'browser-wallet-tx';
+    // S10 review R2: the wallet may already have sent a fee-paying transaction; when its claim is not
+    // accepted, say why and never claim that nothing was sent.
+    const claimedWalletMode = mode === 'browser-wallet-tx' || mode === 'wallet-signed-attestation';
+    const notAccepted =
+      claimedWalletMode && anchorMode !== mode
+        ? !/^[0-9a-f]{64}$/.test(claimedHash)
+          ? 'hash is not 64 hex characters'
+          : !claimedSigner
+            ? 'no signer address'
+            : claimedSigner !== sessionOwner
+              ? 'signer is not the signed-in owner'
+              : 'root hash or range does not match the server audit log'
+        : null;
+
+    // S10: one anchor per transaction. Checked and inserted with no await in between.
+    if (isTx) {
+      const existing = db.onchainAnchors.find((a) => a.mode === 'browser-wallet-tx' && a.txHash.toLowerCase() === claimedHash);
+      if (existing) {
+        res.status(409).json({ error: 'This transaction is already recorded as an anchor.', anchorId: existing.id });
+        return;
+      }
+    }
+
+    const rootHash = isTx ? rootEntry!.entryHash : latestEntry?.entryHash ?? '0'.repeat(64);
+    const auditRange = isTx ? (claimedRange as string) : latestEntry ? `#1 — #${latestEntry.seq}` : '#0';
+    const anchor: OnchainAnchorRecord = {
+      id: 'anc-' + crypto.randomUUID().slice(0, 8),
+      rootHash,
+      auditRange,
+      totalEntries: isTx ? rootEntry!.seq : db.auditLogs.length,
+      signerAddress: simulatedAnchor ? null : claimedSigner,
+      txHash: simulatedAnchor ? generateSimulatedTxHash(rootHash + Date.now()) : claimedHash,
+      network: 'testnet',
+      mode: anchorMode,
+      createdAt: new Date(now()).toISOString(),
+      ownerAccount: isTx ? sessionOwner : null,
+      expectedData: isTx ? anchorPayloadHex(auditRange, rootHash) : null,
+      verification: isTx ? { ...UNCHECKED } : null,
+    };
+    db.onchainAnchors.unshift(anchor);
+    const anchorReason = isTx
+      ? `Submitted EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}: RegisterData tx reported by the wallet; not on chain until the server verifies it.`
+      : anchorMode === 'wallet-signed-attestation'
+        ? `Wallet signed the EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; signature digest only, not on chain.`
+        : notAccepted
+          ? `Wallet reported ${mode === 'browser-wallet-tx' ? 'a RegisterData transaction' : 'a signature'} (${claimedHash.slice(0, 14) || 'no hash'}...) that was not accepted (${notAccepted}); stored as simulated, not on chain and not verified. A transaction may still have been sent.`
+          : `Simulated anchor of EU AI Act audit root (${rootHash.slice(0, 14)}...) for entries ${auditRange}; nothing signed or sent to the chain.`;
+    appendAnchorAudit(db, anchor, 'ANCHOR_NOT_ONCHAIN', anchorReason);
 
     saveDatabase(db);
     dispatchWebhooks('audit.anchored', {
@@ -2078,10 +2159,91 @@ export function createApp(deps: AppDeps) {
       mode: anchor.mode,
       // SECURITY S3: the event fires for every mode; these fields say what actually happened.
       simulated: simulatedAnchor,
-      reportedOnChainByWallet: onChain,
+      reportedOnChainByWallet: isTx,
       serverVerifiedOnChain: false,
     });
-    res.status(201).json({ anchor });
+    res.status(201).json({ anchor: anchorView(anchor), notAccepted });
+  });
+
+  // S10: concurrent verifies of one anchor share one lookup and write once.
+  const lookupBlockItem = deps.getBlockItemStatus ?? chainLookupNotConfigured;
+  const verifyInFlight = new Map<string, Promise<OnchainAnchorRecord | null>>();
+  const isTerminal = (v: AnchorVerification | null | undefined) => v?.status === 'verified' || v?.status === 'rejected';
+
+  async function runAnchorVerify(id: string): Promise<OnchainAnchorRecord | null> {
+    const before = loadDatabase().onchainAnchors.find((a) => a.id === id);
+    if (!before) return null;
+    const result = await verifyAnchorTx(
+      lookupBlockItem,
+      { txHash: before.txHash, ownerAccount: before.ownerAccount ?? null, expectedData: before.expectedData ?? null },
+      deps.anchorCheck,
+    );
+    // Re-read after the await: the anchor may be gone (sandbox reset) or already final.
+    const db = loadDatabase();
+    const anchor = db.onchainAnchors.find((a) => a.id === id);
+    if (!anchor) return null;
+    const prev = anchor.verification ?? UNCHECKED;
+    if (isTerminal(prev)) return anchorView(anchor);
+    anchor.verification = { ...result, checkedAt: new Date(now()).toISOString(), attempts: prev.attempts + 1 };
+    if (result.status === 'verified') {
+      appendAnchorAudit(
+        db,
+        anchor,
+        'ONCHAIN_ANCHORED',
+        `Anchored EU AI Act audit root (${anchor.rootHash.slice(0, 14)}...) for entries ${anchor.auditRange} on Concordium Testnet via RegisterData; server checked: finalized, sender is the anchoring owner, data matches.`,
+      );
+    } else if (result.status === 'rejected') {
+      appendAnchorAudit(
+        db,
+        anchor,
+        'ANCHOR_NOT_ONCHAIN',
+        `Anchor of audit root (${anchor.rootHash.slice(0, 14)}...) rejected by server check (${result.reason}): ${result.detail}`,
+      );
+    }
+    saveDatabase(db);
+    if (result.status === 'verified') {
+      dispatchWebhooks('audit.anchor_verified', {
+        anchorId: anchor.id,
+        rootHash: anchor.rootHash,
+        txHash: anchor.txHash,
+        blockHash: result.blockHash,
+        mode: anchor.mode,
+        simulated: false,
+        serverVerifiedOnChain: true,
+      });
+    }
+    return anchorView(anchor);
+  }
+
+  app.post('/api/anchors/:id/verify', async (req, res) => {
+    const id = req.params.id;
+    const stored = loadDatabase().onchainAnchors.find((a) => a.id === id);
+    if (!stored) {
+      res.status(404).json({ error: 'Anchor not found.' });
+      return;
+    }
+    const view = anchorView(stored);
+    // Nothing to look up: not a transaction, already final, or an older record without expected data.
+    if (stored.mode !== 'browser-wallet-tx' || !stored.expectedData || isTerminal(view.verification)) {
+      res.json({ anchor: view });
+      return;
+    }
+    let pending = verifyInFlight.get(id);
+    if (!pending) {
+      pending = runAnchorVerify(id).finally(() => verifyInFlight.delete(id));
+      verifyInFlight.set(id, pending);
+    }
+    try {
+      const updated = await pending;
+      if (!updated) {
+        res.status(404).json({ error: 'Anchor not found.' });
+        return;
+      }
+      res.json({ anchor: updated });
+    } catch (err) {
+      console.error(`[anchors] verify ${id} failed: ${describeError(err)}`);
+      res.status(500).json({ error: `Anchor verification failed (${describeError(err)}).` });
+    }
   });
 
   app.get('/api/audit/export', (req, res) => {
@@ -2240,6 +2402,7 @@ async function startServer() {
   const app = createApp({
     ownerAccounts,
     getAccountInfo: getTestnetAccountInfo,
+    getBlockItemStatus: getTestnetBlockItemStatus,
     secureCookie: process.env.NODE_ENV === 'production',
   });
 

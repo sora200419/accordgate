@@ -16,7 +16,7 @@ Two stores exist today and are not reconciled: the server JSON file (single tena
 | x402 invoice (`X402Invoice`) | A payment challenge for one call, later marked settled | TODO |
 | Audit entry (`AuditEntry`) | One gateway decision, hash-chained to the previous entry | Append-only, nobody may edit |
 | Webhook (`WebhookConfig`) and delivery log | Alert targets and their delivery results | TODO |
-| On-chain anchor (`OnchainAnchorRecord`) | A Merkle/root hash of an audit range, with tx hash and mode | Append-only |
+| On-chain anchor (`OnchainAnchorRecord`) | A root hash of an audit range, with tx hash, mode, the creating owner (`ownerAccount`), the expected RegisterData bytes (`expectedData`) and the server's chain check (`verification`) | Append-only, except `verification`, which only the verify route changes |
 
 ## Relationships
 ```mermaid
@@ -38,7 +38,10 @@ erDiagram
 - `dailySpentPlt` never exceeds `dailyLimitPlt`; one call never exceeds `perCallLimitPlt` or the policy's `maxPerCallPlt`.
 - An invoice is settled at most once, and only after a real (or explicitly simulated) payment. Today every invoice is `simulated: true` and its `txHash` starts with `sim_`.
 - Private keys are never returned by any API or written to logs.
-- An anchor's `mode` always tells the truth: `simulated-payload` is never shown as on-chain. Only `browser-wallet-tx` gets a CCDScan link and the audit decision `ONCHAIN_ANCHORED`; the other modes get `ANCHOR_NOT_ONCHAIN`. A `simulated-payload` anchor has `signerAddress: null`.
+- An anchor's `mode` always tells the truth: `simulated-payload` is never shown as on-chain. A `simulated-payload` anchor has `signerAddress: null`.
+- Only a `browser-wallet-tx` anchor whose `verification.status` is `verified` gets a CCDScan link and an `ONCHAIN_ANCHORED` audit entry (exactly one per anchor, written on the transition). Creation always writes `ANCHOR_NOT_ONCHAIN`.
+- `verification.status` moves `unverified → verified` or `unverified → rejected`; `verified` and `rejected` never change again. `unverified` reasons keep "not found" (`not_found`) apart from "unknown" (`unreachable`).
+- At most one `browser-wallet-tx` anchor per `txHash` (lower-case). `ownerAccount` comes from the session that created the anchor, and the on-chain sender must equal it.
 
 ## Ownership and access
 See the role and permission table in `docs/SECURITY.md`.
@@ -48,7 +51,7 @@ See the role and permission table in `docs/SECURITY.md`.
 - [ ] Owner field on user data: TODO (`ownerUid` / `workspaceId` exist only in Firestore). The server is single-tenant: owners are the `OWNER_ACCOUNTS` wallet addresses and own everything; records carry no owner field.
 - [x] `createdAt` / `updatedAt` as ISO strings in UTC
 - [ ] Money: TODO — demo stores PLT/EURt and CCD amounts as JS `number` (float). Move to integer minor units before real payments.
-- [x] Status fields are string unions (`AgentStatus`, invoice `status`, anchor `mode`); transitions: TODO
+- [x] Status fields are string unions (`AgentStatus`, invoice `status`, anchor `mode`, anchor `verification.status`); transitions: anchor verification only (see Invariants), others TODO
 - [ ] Delete: TODO (webhooks are hard-deleted; agents are revoked, not deleted)
 - [ ] Unique constraints: TODO (agent `did`, invoice `invoiceId`)
 - [x] On-chain references store their network (`OnchainAnchorRecord.network`)
