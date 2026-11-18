@@ -15,11 +15,11 @@ S7 — agent request freshness (timestamp window + nonce). Branch `feat/s7-agent
 - `/api/sandbox/sign` uses the injected clock and returns a random nonce; the sandbox probe goes through the same guard
 
 ## Steps
-- [ ] `server/agentFreshness.ts` + `server/agentFreshness.test.ts`
-- [ ] Wire into `evaluateCompliancePipeline`, `/api/gateway/invoke`, MCP `tools/call`, `/api/sandbox/sign`, `/api/sandbox/probe`
-- [ ] Types, StatusBadge labels, `api.ts`, ProtocolSandboxView headers and snippets
-- [ ] Route tests in `server/auth.test.ts`: replay, stale, future, concurrent same nonce, out of order, flood (anonymous and capped agent), no circuit breaker, missing nonce 401
-- [ ] Docs: SECURITY (S7 fixed, nonce store per process), README, CLAUDE.md
+- [x] `server/agentFreshness.ts` + `server/agentFreshness.test.ts`
+- [x] Wire into `evaluateCompliancePipeline`, `/api/gateway/invoke`, MCP `tools/call`, `/api/sandbox/sign`, `/api/sandbox/probe`
+- [x] Types, StatusBadge labels, `api.ts`, ProtocolSandboxView headers and snippets
+- [x] Route tests in `server/auth.test.ts`: replay, stale, future, concurrent same nonce, out of order, flood (anonymous and capped agent), no circuit breaker, missing nonce 401
+- [x] Docs: SECURITY (S7 fixed, nonce store per process), README, CLAUDE.md
 
 ## Verification gate
 - [x] `npm run lint`, `npm test`, `npm run check:docs`, `npm run build`
