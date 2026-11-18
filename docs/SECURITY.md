@@ -57,7 +57,7 @@ Review of the imported Gemini demo done on 2026-11-18 by reading the code (not b
 | Firebase Auth + Firestore (`firebase`) | ^13.4.0, optional (off unless `VITE_FIREBASE_*` set) | — | TODO | TODO | Sync errors caught and logged in `App.tsx`; when off, sync throws "Firebase not configured" |
 | DNS TXT lookup (`node:dns`) | Node built-in | — | TODO | — | Returns `dnsResolved: false` |
 | Outbound webhooks | `fetch` | — | 4.5 s | — | Logged as failed delivery |
-| Gemini API (`@google/genai`) | removed from package.json (2026-11-18) | — | — | — | Was never imported. `GEMINI_API_KEY` line in `.env.example` still to remove |
+| Gemini API (`@google/genai`) | removed from package.json (2026-11-18) | — | — | — | Was never imported; `GEMINI_API_KEY` removed from `.env.example` |
 
 ### Known dependency advisories
 `npm audit --omit=dev` (2026-11-18) reports 12 (9 high, 3 moderate), e.g. `@grpc/grpc-js <=1.13.5`, `picomatch`, `uuid <11.1.1`. They come mostly through `@concordium/web-sdk` and pre-date slice 1. TODO: review in a later slice.
