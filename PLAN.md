@@ -3,30 +3,31 @@
 <!-- Rewritten at the end of Plan Mode for every slice. After /clear, a new session continues with "@PLAN.md". -->
 
 ## Slice
-Chore — CI and docs cleanup after S1. Branch `chore/ci-and-docs`.
+S7 — agent request freshness (timestamp window + nonce). Branch `feat/s7-agent-request-freshness`.
 
 ## Decisions (made 2026-11-18)
-- GitHub Actions: `actions/checkout@v7` (latest v7.0.1), `actions/setup-node@v7` (latest v7.1.0); their breaking changes touch only `pull_request_target`, which we don't use
-- F-001 automation: `scripts/check-doc-packages.ts`, no new dependency, two checks only: (a) a backticked package (scoped, or installed per `package-lock.json`) must be a direct dependency unless in `ALLOWED` with a reason; (b) a line saying "not in / removed from package.json" must not name a direct dependency
-- Scope of the check: README.md, CLAUDE.md, `docs/**/*.md`; PLAN.md and FAILURES.md are history and not checked
-- `APP_URL` removed from `.env.example`: nothing in the repo reads it
+- New header `X-Agent-Nonce`, part of the signed string: `did|endpointPath|timestamp|nonce|cardHash`; missing → 401 (REST and MCP)
+- Strict formats: timestamp `YYYY-MM-DDTHH:mm:ss(.sss)Z`, nonce `^[A-Za-z0-9_-]{16,128}$` (no `|`, so the signed string is unambiguous)
+- Window: at most 120 s old, at most 30 s in the future; timestamps older than the guard's creation (process start) are rejected, so a restart does not reopen replay
+- Order: signature first, then freshness + nonce, so only validly signed requests can add nonces; check-and-insert is synchronous (no await), so concurrent duplicates → exactly one passes
+- Store `server/agentFreshness.ts`: per-agent `Map<nonce, expiresAt = ts + maxAge>`, swept on each check; per-agent cap (default 1000) rejects that agent with 429 and never evicts unexpired nonces
+- Outcomes: `BLOCKED_STALE_REQUEST` / `BLOCKED_REPLAYED` (403), cap → `BLOCKED_RATE_LIMITED` (429); none count toward the circuit breaker
+- `/api/sandbox/sign` uses the injected clock and returns a random nonce; the sandbox probe goes through the same guard
 
 ## Steps
-- [x] Bump actions in `.github/workflows/ci.yml` (including the commented deploy job)
-- [x] `scripts/check-doc-packages.ts` + `scripts/check-doc-packages.test.ts`; `npm run check:docs`; CI step "Docs packages"
-- [x] `vite.config.ts`: `__dirname` → `import.meta.dirname` (Vite 8 `configLoader: 'native'` warning)
-- [x] BRIEF milestone "Server API protected" marked done (CI run 44259897748)
-- [x] `.env.example`: `APP_URL` removed
-- [x] README, CLAUDE.md, FAILURES.md (F-001 now automated) updated; pending FAILURES.md pruning committed separately
+- [ ] `server/agentFreshness.ts` + `server/agentFreshness.test.ts`
+- [ ] Wire into `evaluateCompliancePipeline`, `/api/gateway/invoke`, MCP `tools/call`, `/api/sandbox/sign`, `/api/sandbox/probe`
+- [ ] Types, StatusBadge labels, `api.ts`, ProtocolSandboxView headers and snippets
+- [ ] Route tests in `server/auth.test.ts`: replay, stale, future, concurrent same nonce, out of order, flood (anonymous and capped agent), no circuit breaker, missing nonce 401
+- [ ] Docs: SECURITY (S7 fixed, nonce store per process), README, CLAUDE.md
 
 ## Verification gate
-- [x] `npm run lint`, `npm test`, `npm run check:docs` (0 problems), `npm run build` (no `__dirname` warning)
-- [x] Check proven to catch F-001: an injected "`firebase` … not in package.json" line and a missing `ALLOWED` entry each fail
-- [x] `harness-review` passed (1 round; R1 claim wording fixed, R3 noted in header, R2 not adopted per scope, R4 → check CI log for the summary line)
-- [x] CI green on PR #2 (GitHub Actions run 44291817506, 31/31 tests, Docs packages step printed "6 files, 0 problem(s)", 2026-11-18)
+- [x] `npm run lint`, `npm test`, `npm run check:docs`, `npm run build`
+- [x] Tests proven to catch the bug: guard call removed (copy of `server.ts` aside) → 7 S7 route tests fail; nonce recorded before the signature check → the anonymous-flood test fails; restored from the copy → 51/51
+- [x] `harness-review` passed (2 rounds; R1 trace key/labels fixed, R2 mutation evidence, R3/R5 wording and strict dates fixed, R4 assertion added, R6/R7 documented in SECURITY S9)
+- [ ] CI green on the PR
 
 ## Next slices
-1. S7 — agent request freshness (timestamp window + nonce)
-2. S3 — label every simulated result in UI and README
-3. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
-4. S2 — move agent private keys out of the JSON state file
+1. S3 — label every simulated result in UI and README
+2. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors
+3. S2 — move agent private keys out of the JSON state file

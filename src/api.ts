@@ -67,7 +67,7 @@ export const api = {
   authLogout: () => requestJson<{ signedOut: boolean }>('/api/auth/logout', { method: 'POST' }),
 
   sandboxSign: (agentDid: string, endpointPath: string) =>
-    requestJson<{ timestamp: string; signatureHex: string }>('/api/sandbox/sign', {
+    requestJson<{ timestamp: string; nonce: string; signatureHex: string }>('/api/sandbox/sign', {
       method: 'POST',
       body: JSON.stringify({ agentDid, endpointPath }),
     }),

@@ -49,6 +49,8 @@ export function AuditDecisionText({ decision }: { decision: AuditDecision }) {
       BLOCKED_REVOKED: '拦截 · 身份已吊销',
       BLOCKED_CARD_TAMPERED: '拦截 · 卡片哈希篡改',
       BLOCKED_SIGNATURE_INVALID: '拦截 · Ed25519 签名无效',
+      BLOCKED_STALE_REQUEST: '拦截 · 请求时间戳过期',
+      BLOCKED_REPLAYED: '拦截 · 重放请求 (nonce 已用)',
       BLOCKED_RATE_LIMITED: '拦截 · QPM 突发限流 (429)',
       BLOCKED_ZKP_FAILED: '拦截 · ZKP 未通过',
       BLOCKED_SPENDING_LIMIT: '拦截 · 超出限额护栏',

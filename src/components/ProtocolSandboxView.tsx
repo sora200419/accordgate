@@ -227,6 +227,7 @@ export function ProtocolSandboxView({
           const signed = await api.sandboxSign(selectedAgent.did, toolPolicy.endpointPath);
           headers['X-Agent-Signature'] = signed.signatureHex;
           headers['X-Agent-Timestamp'] = signed.timestamp;
+          headers['X-Agent-Nonce'] = signed.nonce;
         }
       }
 
@@ -264,11 +265,13 @@ export function ProtocolSandboxView({
   -H "X-ZKP-Jurisdiction: ${jurisdictionClaim}" \\
   -H "X-ZKP-Age: ${ageClaim}" \\
   -H "X-Agent-Timestamp: $TS" \\
+  -H "X-Agent-Nonce: $NONCE" \\
   -H "X-Agent-Signature: $SIG" \\
   -d '{"endpointPath":"${selectedPolicy.endpointPath}","requestedTransferPlt":${requestedTransferPlt}}'
-# $TS = ISO-8601 time; $SIG = hex Ed25519 signature by the agent key over
-# "${selectedAgent.did}|${selectedPolicy.endpointPath}|$TS|${selectedAgent.cardHash}"
-# Unsigned requests are rejected with 401.`
+# $TS = ISO-8601 UTC time (at most 120 s old, 30 s ahead); $NONCE = 16-128 random [A-Za-z0-9_-], never reused inside the window;
+# $SIG = hex Ed25519 signature by the agent key over
+# "${selectedAgent.did}|${selectedPolicy.endpointPath}|$TS|$NONCE|${selectedAgent.cardHash}"
+# Unsigned requests are rejected with 401; a reused nonce or stale timestamp with 403.`
     : '';
 
   const typescriptSdkSnippet = selectedAgent && selectedPolicy
@@ -283,9 +286,11 @@ const ENDPOINT = '${selectedPolicy.endpointPath}';
 
 async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) {
   const payload = JSON.stringify({ endpointPath: ENDPOINT, requestedTransferPlt: ${requestedTransferPlt} });
-  // The gateway verifies an Ed25519 signature (hex) over "did|endpointPath|timestamp|cardHash".
+  // The gateway verifies an Ed25519 signature (hex) over "did|endpointPath|timestamp|nonce|cardHash".
+  // The timestamp must be within 120 s (30 s ahead at most) and each nonce works only once.
   const timestamp = new Date().toISOString();
-  const signingPayload = \`\${AGENT_DID}|\${ENDPOINT}|\${timestamp}|\${CARD_HASH}\`;
+  const nonce = crypto.randomBytes(16).toString('base64url');
+  const signingPayload = \`\${AGENT_DID}|\${ENDPOINT}|\${timestamp}|\${nonce}|\${CARD_HASH}\`;
   const sig = crypto.sign(null, Buffer.from(signingPayload, 'utf-8'), privateKeyPem).toString('hex');
 
   const res = await fetch(\`\${GATEWAY}/api/gateway/invoke\`, {
@@ -296,6 +301,7 @@ async function callProtectedEndpoint(privateKeyPem: string, receiptId?: string) 
       'X-Agent-Card-Hash': CARD_HASH,
       'X-Agent-Signature': sig,
       'X-Agent-Timestamp': timestamp,
+      'X-Agent-Nonce': nonce,
       'X-ZKP-Jurisdiction': '${jurisdictionClaim}',
       'X-ZKP-Age': '${ageClaim}',
       ...(receiptId ? { 'X-Payment-Receipt': receiptId } : {}),
@@ -328,8 +334,8 @@ BODY = {"endpointPath": "${selectedPolicy.endpointPath}", "requestedTransferPlt"
 
 with httpx.Client() as client:
     r = client.post(f"{GATEWAY}/api/gateway/invoke", json=BODY, headers=HEADERS)
-    # Add X-Agent-Timestamp and X-Agent-Signature (hex Ed25519 over "did|endpointPath|timestamp|cardHash");
-    # unsigned requests are rejected with 401.
+    # Add X-Agent-Timestamp, X-Agent-Nonce (single use) and X-Agent-Signature
+    # (hex Ed25519 over "did|endpointPath|timestamp|nonce|cardHash"); unsigned requests are rejected with 401.
     if r.status_code == 402:
         # x402 settlement is SIMULATED in this demo and done by the gateway owner in the console;
         # retry with {"X-Payment-Receipt": invoice_id} once it is settled.
@@ -697,9 +703,9 @@ with httpx.Client() as client:
             </div>
           ) : (
             <div className="space-y-3">
-              {result.traces.map((step) => (
+              {result.traces.map((step, index) => (
                 <div
-                  key={step.step}
+                  key={`${step.step}-${step.key}`}
                   className="flex items-start gap-3 rounded-md border border-slate-200 p-3.5 dark:border-slate-800"
                 >
                   <div className="mt-0.5 shrink-0">
@@ -711,7 +717,7 @@ with httpx.Client() as client:
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                        0{step.step}. {step.title}
+                        {String(index + 1).padStart(2, '0')}. {step.title}
                       </span>
                       <span className="font-mono text-[11px] uppercase text-slate-500 dark:text-slate-400">
                         {step.status}
