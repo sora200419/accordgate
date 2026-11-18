@@ -25,7 +25,7 @@ S7 — agent request freshness (timestamp window + nonce). Branch `feat/s7-agent
 - [x] `npm run lint`, `npm test`, `npm run check:docs`, `npm run build`
 - [x] Tests proven to catch the bug: guard call removed (copy of `server.ts` aside) → 7 S7 route tests fail; nonce recorded before the signature check → the anonymous-flood test fails; restored from the copy → 51/51
 - [x] `harness-review` passed (2 rounds; R1 trace key/labels fixed, R2 mutation evidence, R3/R5 wording and strict dates fixed, R4 assertion added, R6/R7 documented in SECURITY S9)
-- [ ] CI green on the PR
+- [x] CI green on PR #3 (GitHub Actions run 44314124660, 51/51 tests, Docs packages step printed "6 files, 0 problem(s)", 2026-11-18)
 
 ## Next slices
 1. S3 — label every simulated result in UI and README
