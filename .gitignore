@@ -1,0 +1,25 @@
+# Secrets
+.env*
+!.env.example
+*.pem
+*.key
+secrets/
+firebase-applet-config.json
+
+# Runtime state (contains agent private keys; regenerated on start)
+data/
+
+# Claude Code personal settings
+.claude/settings.local.json
+
+# Dependencies and builds
+node_modules/
+build/
+dist/
+coverage/
+server.js
+
+# OS / editor / logs
+.DS_Store
+Thumbs.db
+*.log

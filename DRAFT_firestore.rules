@@ -1,0 +1,364 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Reusable Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerUid == request.auth.uid;
+    }
+
+    // Entity Validation Blueprints
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspace(data, workspaceId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'name', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'name', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == workspaceId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAgent(data, workspaceId, agentId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'workspaceId', 'did', 'name', 'role', 'ownerEntity',
+          'externalKeys', 'publicKeyHex', 'agentCard', 'cardHash',
+          'registryContract', 'keyRegistryContract', 'status', 'verifiedPrincipal',
+          'dailySpentPlt', 'dailyLimitPlt', 'perCallLimitPlt',
+          'delegationDepth', 'cascadeRevoke', 'consecutiveViolations',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'workspaceId', 'did', 'name', 'role', 'ownerEntity',
+          'vcdcDomain', 'externalKeys', 'publicKeyHex', 'agentCard', 'cardHash',
+          'registryContract', 'keyRegistryContract', 'status', 'verifiedPrincipal',
+          'dailySpentPlt', 'dailyLimitPlt', 'perCallLimitPlt',
+          'parentAgentId', 'delegationDepth', 'cascadeRevoke', 'consecutiveViolations',
+          'walletAddress', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == agentId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.workspaceId is string && data.workspaceId == workspaceId
+        && data.did is string && data.did.size() >= 10 && data.did.size() <= 256
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.role is string && data.role.size() <= 180
+        && data.ownerEntity is string && data.ownerEntity.size() <= 180
+        && (!('vcdcDomain' in data) || data.vcdcDomain == null || (data.vcdcDomain is string && data.vcdcDomain.size() <= 253))
+        && data.externalKeys is list && data.externalKeys.size() <= 10
+        && data.publicKeyHex is string && data.publicKeyHex.size() <= 512
+        && data.agentCard is map
+        && data.cardHash is string && data.cardHash.size() >= 16 && data.cardHash.size() <= 128
+        && data.registryContract is string && data.registryContract.size() <= 64
+        && data.keyRegistryContract is string && data.keyRegistryContract.size() <= 64
+        && data.status in ['active', 'suspended', 'revoked']
+        && data.verifiedPrincipal is bool
+        && data.dailySpentPlt is number && data.dailySpentPlt >= 0
+        && data.dailyLimitPlt is number && data.dailyLimitPlt >= 0
+        && data.perCallLimitPlt is number && data.perCallLimitPlt >= 0
+        && (!('parentAgentId' in data) || data.parentAgentId == null || (data.parentAgentId is string && isValidId(data.parentAgentId)))
+        && data.delegationDepth is int && data.delegationDepth >= 0 && data.delegationDepth <= 5
+        && data.cascadeRevoke is bool
+        && data.consecutiveViolations is int && data.consecutiveViolations >= 0
+        && (!('walletAddress' in data) || data.walletAddress == null || (data.walletAddress is string && data.walletAddress.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPolicy(data, workspaceId, policyId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'workspaceId', 'serviceName', 'endpointPath',
+          'protocol', 'description', 'requiredZkpPredicates',
+          'maxPerCallPlt', 'dailyAgentCapPlt', 'x402PricePlt',
+          'asset', 'sponsoredGas', 'rateLimitQpm', 'circuitBreakerThreshold',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'workspaceId', 'serviceName', 'endpointPath',
+          'protocol', 'description', 'requiredZkpPredicates',
+          'maxPerCallPlt', 'dailyAgentCapPlt', 'x402PricePlt',
+          'asset', 'sponsoredGas', 'rateLimitQpm', 'circuitBreakerThreshold',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == policyId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.workspaceId is string && data.workspaceId == workspaceId
+        && data.serviceName is string && data.serviceName.size() >= 1 && data.serviceName.size() <= 120
+        && data.endpointPath is string && data.endpointPath.size() >= 1 && data.endpointPath.size() <= 200
+        && data.protocol in ['MCP', 'REST']
+        && data.description is string && data.description.size() <= 500
+        && data.requiredZkpPredicates is map
+        && data.maxPerCallPlt is number && data.maxPerCallPlt >= 0
+        && data.dailyAgentCapPlt is number && data.dailyAgentCapPlt >= 0
+        && data.x402PricePlt is number && data.x402PricePlt >= 0
+        && data.asset == 'EURt'
+        && data.sponsoredGas is bool
+        && data.rateLimitQpm is int && data.rateLimitQpm >= 1 && data.rateLimitQpm <= 10000
+        && data.circuitBreakerThreshold is int && data.circuitBreakerThreshold >= 1 && data.circuitBreakerThreshold <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditEntry(data, workspaceId, auditId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'workspaceId', 'seq', 'timestamp', 'requestId',
+          'agentDid', 'agentName', 'endpointPath', 'protocol', 'decision',
+          'reason', 'zkpClaims', 'amountPlt', 'prevHash', 'entryHash', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'workspaceId', 'seq', 'timestamp', 'requestId',
+          'agentDid', 'agentName', 'endpointPath', 'protocol', 'decision',
+          'reason', 'zkpClaims', 'x402ReceiptId', 'amountPlt', 'prevHash', 'entryHash', 'createdAt'
+        ])
+        && data.id is string && data.id == auditId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.workspaceId is string && data.workspaceId == workspaceId
+        && data.seq is int && data.seq >= 1
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && data.requestId is string && data.requestId.size() <= 64
+        && data.agentDid is string && data.agentDid.size() <= 256
+        && data.agentName is string && data.agentName.size() <= 120
+        && data.endpointPath is string && data.endpointPath.size() <= 200
+        && data.protocol in ['MCP', 'REST', 'GOVERNANCE']
+        && data.decision is string && data.decision.size() >= 3 && data.decision.size() <= 64
+        && data.reason is string && data.reason.size() <= 500
+        && data.zkpClaims is map
+        && (!('x402ReceiptId' in data) || data.x402ReceiptId == null || (data.x402ReceiptId is string && data.x402ReceiptId.size() <= 128))
+        && data.amountPlt is number && data.amountPlt >= 0
+        && data.prevHash is string && data.prevHash.size() == 64
+        && data.entryHash is string && data.entryHash.size() == 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidWebhookConfig(data, workspaceId, configId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'workspaceId', 'label', 'url', 'enabledEvents', 'active',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'workspaceId', 'label', 'url', 'enabledEvents', 'active',
+          'lastStatusCode', 'lastDeliveredAt', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == configId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.workspaceId is string && data.workspaceId == workspaceId
+        && data.label is string && data.label.size() >= 1 && data.label.size() <= 120
+        && data.url is string && data.url.size() >= 8 && data.url.size() <= 512
+        && data.enabledEvents is list && data.enabledEvents.size() > 0 && data.enabledEvents.size() <= 10 && data.enabledEvents[0] is string
+        && data.active is bool
+        && (!('lastStatusCode' in data) || data.lastStatusCode == null || data.lastStatusCode is int)
+        && (!('lastDeliveredAt' in data) || data.lastDeliveredAt == null || (data.lastDeliveredAt is string && data.lastDeliveredAt.size() <= 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOnchainAnchor(data, workspaceId, anchorId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'workspaceId', 'rootHash', 'auditRange', 'totalEntries',
+          'signerAddress', 'txHash', 'network', 'mode', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'workspaceId', 'rootHash', 'auditRange', 'totalEntries',
+          'signerAddress', 'txHash', 'network', 'mode', 'createdAt'
+        ])
+        && data.id is string && data.id == anchorId && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid == request.auth.uid
+        && data.workspaceId is string && data.workspaceId == workspaceId
+        && data.rootHash is string && data.rootHash.size() == 64
+        && data.auditRange is string && data.auditRange.size() <= 64
+        && data.totalEntries is int && data.totalEntries >= 1
+        && data.signerAddress is string && data.signerAddress.size() >= 10 && data.signerAddress.size() <= 128
+        && data.txHash is string && data.txHash.size() >= 10 && data.txHash.size() <= 128
+        && data.network in ['testnet', 'mainnet']
+        && data.mode in ['browser-wallet-tx', 'wallet-signed-attestation', 'simulated-payload']
+        && data.createdAt is timestamp;
+    }
+
+    // /users/{userId} - Private User PII Isolation
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // /workspaces/{workspaceId}
+    match /workspaces/{workspaceId} {
+      allow get: if isValidId(workspaceId) && isVerifiedUser() && existing().ownerUid == request.auth.uid;
+      allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isValidId(workspaceId)
+        && isVerifiedUser()
+        && isValidWorkspace(incoming(), workspaceId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(workspaceId)
+        && isVerifiedUser()
+        && existing().ownerUid == request.auth.uid
+        && isValidWorkspace(incoming(), workspaceId)
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']);
+      allow delete: if false;
+
+      // Subcollection: agents
+      match /agents/{agentId} {
+        allow get: if isValidId(workspaceId) && isValidId(agentId) && isWorkspaceOwner(workspaceId);
+        allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(workspaceId)
+          && isValidId(agentId)
+          && isVerifiedUser()
+          && isValidAgent(incoming(), workspaceId, agentId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId);
+        allow update: if isValidId(workspaceId)
+          && isValidId(agentId)
+          && isVerifiedUser()
+          && isValidAgent(incoming(), workspaceId, agentId)
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId)
+          && (
+            (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'consecutiveViolations', 'updatedAt']))
+            || (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'dailySpentPlt', 'consecutiveViolations', 'updatedAt']))
+            || (incoming().diff(existing()).affectedKeys().hasOnly(['agentCard', 'cardHash', 'walletAddress', 'cascadeRevoke', 'updatedAt']))
+          );
+        allow delete: if isValidId(workspaceId) && isValidId(agentId) && isWorkspaceOwner(workspaceId);
+      }
+
+      // Subcollection: policies
+      match /policies/{policyId} {
+        allow get: if isValidId(workspaceId) && isValidId(policyId) && isWorkspaceOwner(workspaceId);
+        allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(workspaceId)
+          && isValidId(policyId)
+          && isVerifiedUser()
+          && isValidPolicy(incoming(), workspaceId, policyId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId);
+        allow update: if isValidId(workspaceId)
+          && isValidId(policyId)
+          && isVerifiedUser()
+          && isValidPolicy(incoming(), workspaceId, policyId)
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'requiredZkpPredicates', 'maxPerCallPlt', 'dailyAgentCapPlt',
+            'x402PricePlt', 'sponsoredGas', 'rateLimitQpm', 'circuitBreakerThreshold', 'updatedAt'
+          ]);
+        allow delete: if isValidId(workspaceId) && isValidId(policyId) && isWorkspaceOwner(workspaceId);
+      }
+
+      // Subcollection: auditLogs (append-only; delete allowed only for workspace reset)
+      match /auditLogs/{auditId} {
+        allow get: if isValidId(workspaceId) && isValidId(auditId) && isWorkspaceOwner(workspaceId);
+        allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(workspaceId)
+          && isValidId(auditId)
+          && isVerifiedUser()
+          && isValidAuditEntry(incoming(), workspaceId, auditId)
+          && incoming().createdAt == request.time
+          && isWorkspaceOwner(workspaceId);
+        allow update: if false;
+        allow delete: if isValidId(workspaceId) && isValidId(auditId) && isWorkspaceOwner(workspaceId);
+      }
+
+      // Subcollection: webhookConfigs
+      match /webhookConfigs/{configId} {
+        allow get: if isValidId(workspaceId) && isValidId(configId) && isWorkspaceOwner(workspaceId);
+        allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(workspaceId)
+          && isValidId(configId)
+          && isVerifiedUser()
+          && isValidWebhookConfig(incoming(), workspaceId, configId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId);
+        allow update: if isValidId(workspaceId)
+          && isValidId(configId)
+          && isVerifiedUser()
+          && isValidWebhookConfig(incoming(), workspaceId, configId)
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isWorkspaceOwner(workspaceId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'label', 'url', 'enabledEvents', 'active', 'lastStatusCode', 'lastDeliveredAt', 'updatedAt'
+          ]);
+        allow delete: if isValidId(workspaceId) && isValidId(configId) && isWorkspaceOwner(workspaceId);
+      }
+
+      // Subcollection: onchainAnchors (append-only Concordium Testnet receipts)
+      match /onchainAnchors/{anchorId} {
+        allow get: if isValidId(workspaceId) && isValidId(anchorId) && isWorkspaceOwner(workspaceId);
+        allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+        allow create: if isValidId(workspaceId)
+          && isValidId(anchorId)
+          && isVerifiedUser()
+          && isValidOnchainAnchor(incoming(), workspaceId, anchorId)
+          && incoming().createdAt == request.time
+          && isWorkspaceOwner(workspaceId);
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+  }
+}

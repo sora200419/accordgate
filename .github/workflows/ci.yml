@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # TODO: switch to `npm ci` once a package-lock.json is committed (or to bun if chosen)
+      - name: Install
+        run: npm install
+      - name: Typecheck
+        run: npm run lint
+      - name: Test
+        run: echo "TODO no test runner yet" && exit 1
+      - name: Build
+        run: npm run build
+
+  # Hosting not chosen yet. Prefer the platform's Git integration; use this job only if it has none.
+  # Never deploy smart contracts to mainnet from CI.
+  # deploy:
+  #   needs: ci
+  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 15
+  #   environment: production
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Deploy
+  #       run: echo "TODO deploy command"
+  #       env:
+  #         DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+  #     - name: Smoke check
+  #       run: curl --fail --max-time 20 "TODO https://your-app/api/health"

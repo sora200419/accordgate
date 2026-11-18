@@ -1,0 +1,184 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated compliance officer profile isolated to owner.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Enterprise compliance gateway workspace owned by a verified user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "name", "createdAt", "updatedAt"]
+    },
+    "Agent": {
+      "title": "Agent",
+      "description": "CIS-8004 trusted agent identity with optional delegation parent and circuit-breaker state.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "did": { "type": "string", "minLength": 10, "maxLength": 256 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 180 },
+        "ownerEntity": { "type": "string", "maxLength": 180 },
+        "vcdcDomain": { "type": "string", "maxLength": 253 },
+        "externalKeys": { "type": "array" },
+        "publicKeyHex": { "type": "string", "maxLength": 512 },
+        "agentCard": { "type": "object" },
+        "cardHash": { "type": "string", "maxLength": 128 },
+        "registryContract": { "type": "string", "maxLength": 64 },
+        "keyRegistryContract": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["active", "suspended", "revoked"] },
+        "verifiedPrincipal": { "type": "boolean" },
+        "dailySpentPlt": { "type": "number" },
+        "dailyLimitPlt": { "type": "number" },
+        "perCallLimitPlt": { "type": "number" },
+        "parentAgentId": { "type": "string", "maxLength": 128 },
+        "delegationDepth": { "type": "integer" },
+        "cascadeRevoke": { "type": "boolean" },
+        "consecutiveViolations": { "type": "integer" },
+        "walletAddress": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "did", "name", "status", "cardHash", "createdAt", "updatedAt"]
+    },
+    "GatePolicy": {
+      "title": "GatePolicy",
+      "description": "ZKP privacy gate, rate limit, circuit breaker, and x402 pricing policy.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "serviceName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "endpointPath": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "protocol": { "type": "string", "enum": ["MCP", "REST"] },
+        "description": { "type": "string", "maxLength": 500 },
+        "requiredZkpPredicates": { "type": "object" },
+        "maxPerCallPlt": { "type": "number" },
+        "dailyAgentCapPlt": { "type": "number" },
+        "x402PricePlt": { "type": "number" },
+        "asset": { "type": "string", "enum": ["EURt"] },
+        "sponsoredGas": { "type": "boolean" },
+        "rateLimitQpm": { "type": "integer" },
+        "circuitBreakerThreshold": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "serviceName", "endpointPath", "protocol", "createdAt", "updatedAt"]
+    },
+    "AuditEntry": {
+      "title": "AuditEntry",
+      "description": "Tamper-evident EU AI Act SHA-256 hash-chained audit record (Zero-PII).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "seq": { "type": "integer" },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "requestId": { "type": "string", "maxLength": 64 },
+        "agentDid": { "type": "string", "maxLength": 256 },
+        "agentName": { "type": "string", "maxLength": 120 },
+        "endpointPath": { "type": "string", "maxLength": 200 },
+        "protocol": { "type": "string", "enum": ["MCP", "REST", "GOVERNANCE"] },
+        "decision": { "type": "string", "maxLength": 64 },
+        "reason": { "type": "string", "maxLength": 500 },
+        "zkpClaims": { "type": "object" },
+        "x402ReceiptId": { "type": "string", "maxLength": 128 },
+        "amountPlt": { "type": "number" },
+        "prevHash": { "type": "string", "maxLength": 128 },
+        "entryHash": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "seq", "requestId", "decision", "prevHash", "entryHash", "createdAt"]
+    },
+    "WebhookConfig": {
+      "title": "WebhookConfig",
+      "description": "Enterprise webhook alerting destination and delivery state.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "url": { "type": "string", "minLength": 8, "maxLength": 512 },
+        "enabledEvents": { "type": "array" },
+        "active": { "type": "boolean" },
+        "lastStatusCode": { "type": "integer" },
+        "lastDeliveredAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "label", "url", "active", "createdAt", "updatedAt"]
+    },
+    "OnchainAnchor": {
+      "title": "OnchainAnchor",
+      "description": "Concordium Testnet anchor transaction receipt for EU AI Act audit chain roots.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "rootHash": { "type": "string", "minLength": 64, "maxLength": 128 },
+        "auditRange": { "type": "string", "maxLength": 64 },
+        "totalEntries": { "type": "integer" },
+        "signerAddress": { "type": "string", "maxLength": 128 },
+        "txHash": { "type": "string", "maxLength": 128 },
+        "network": { "type": "string", "enum": ["testnet", "mainnet"] },
+        "mode": { "type": "string", "enum": ["browser-wallet-tx", "wallet-signed-attestation", "simulated-payload"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "workspaceId", "rootHash", "signerAddress", "txHash", "network", "mode", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile isolated by owner userId."
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/Workspace" },
+      "description": "Compliance workspace root owned by authenticated user."
+    },
+    "/workspaces/{workspaceId}/agents/{agentId}": {
+      "schema": { "$ref": "#/entities/Agent" },
+      "description": "CIS-8004 agents belonging to workspace."
+    },
+    "/workspaces/{workspaceId}/policies/{policyId}": {
+      "schema": { "$ref": "#/entities/GatePolicy" },
+      "description": "Endpoint ZKP, rate-limit, and x402 policies."
+    },
+    "/workspaces/{workspaceId}/auditLogs/{auditId}": {
+      "schema": { "$ref": "#/entities/AuditEntry" },
+      "description": "EU AI Act SHA-256 hash-chained audit logs."
+    },
+    "/workspaces/{workspaceId}/webhookConfigs/{configId}": {
+      "schema": { "$ref": "#/entities/WebhookConfig" },
+      "description": "Enterprise compliance webhook configurations."
+    },
+    "/workspaces/{workspaceId}/onchainAnchors/{anchorId}": {
+      "schema": { "$ref": "#/entities/OnchainAnchor" },
+      "description": "Concordium Testnet audit root anchor receipts."
+    }
+  }
+}

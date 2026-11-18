@@ -1,0 +1,67 @@
+# AccordGate — Concordium Trusted Agent Compliance Gateway
+
+## Mode
+MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this mode. Goal, scope and milestones: `docs/BRIEF.md`. Entities and invariants: `docs/DATA_MODEL.md`. UI direction and screens: `docs/DESIGN.md`. Permissions, threats and privacy claims: `docs/SECURITY.md`. Current slice: `PLAN.md`.
+
+- Keep it simple (KISS). Write the most direct code that works; no new abstraction layers, caches or queues unless BRIEF asks for them.
+- Started from a Gemini / AI Studio demo (imported 2026-11-18). Treat its code as unreviewed: check before trusting, and never assume a feature works because the UI says so.
+
+## Stack
+- Frontend: React 19, Vite 8, Tailwind 4, `motion`, `lucide-react` (`src/`)
+- Backend: Express 4 in `server.ts` (~2000 lines) plus `server/` (store, crypto, types); runs through `tsx`
+- Chain: `@concordium/web-sdk` ^12 (testnet gRPC), `@concordium/browser-wallet-api-helpers` (imported but NOT in package.json yet)
+- Persistence: JSON file `data/gateway-state.json` (server, regenerated if missing, git-ignored); Firebase Firestore + Google sign-in on the client (`firebase` NOT in package.json, `firebase-applet-config.json` missing)
+- Language: TypeScript (`typescript ^7.0.2` in package.json: verify this version exists before relying on it)
+- Package manager: TODO — repo has `bun.lock` but README says npm; pick one and delete the other lockfile
+- Hosting: TODO (the demo ran on AI Studio / Cloud Run)
+
+## Common Commands
+- Install: `npm install` (TODO: confirm package manager)
+- Dev server (Express + Vite middleware): `npm run dev`
+- Typecheck: `npm run lint` (runs `tsc --noEmit`)
+- Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)
+- Test: TODO (no test runner; `firestore.rules.test.ts` exists but nothing runs it)
+- Build: `npm run build`
+- Reset demo data: delete `data/gateway-state.json` or `POST /api/sandbox/reset`
+
+## Environments
+| | Local | Staging / testnet | Production |
+| --- | --- | --- | --- |
+| URL | http://localhost:3000 (`PORT` in server.ts) | TODO | TODO |
+| Chain network | Concordium testnet | Concordium testnet | TODO |
+| Secrets from | `.env` | Platform env vars | Platform env vars |
+| Deploys when | — | Every PR (preview) | Merge to main, after CI is green |
+
+- CI: `.github/workflows/ci.yml` runs install, typecheck, build.
+- Contracts read by the server: testnet `<10082,0>` (CIS-8004) and `<10081,0>` (CIS-8). Not deployed by us.
+- Mainnet actions are done by the user, never by CI or Claude.
+- Live state comes from the platform's deploy records and logs, never inferred from config.
+
+## Conventions
+- API errors: the demo uses `{ "error": "message" }`; new code keeps that shape until a slice changes it on purpose.
+- Anything simulated (mock tx hashes, `simulated-payload` anchors, hash-based "ZKP" commitments, x402 settlement) must be labelled as simulated in the UI and README.
+- Test data and test accounts live in the seed (`server/store.ts` default state); never paste passwords in chat.
+- Tests use a fixed clock or non-expiring data, never the real date.
+- Logs never contain secrets, private keys, tokens, auth headers or personal data (emails, display names); sanitise third-party errors before logging or returning them.
+- Every external call (gRPC, DNS, webhooks, Firebase) has a timeout and an error message that names the cause.
+
+## Git
+- Branches: `feat/…`, `fix/…`, `chore/…`.
+- Conventional Commits (`feat(scope): …`); one slice per commit.
+- Never commit `.env*` (except `.env.example`), `data/`, keys or build output.
+
+## Project Structure
+- `server.ts` — all API routes (`/api/...`), gateway logic, Vite middleware
+- `server/store.ts` — JSON-file database, seed data; `server/crypto.ts` — hashing, Ed25519, mock tx hash; `server/types.ts`
+- `src/App.tsx` — shell, Google sign-in; `src/components/*View.tsx` — one view per tab; `src/api.ts` — fetch wrapper
+- `src/services/concordiumWallet.ts` — browser wallet connect, sign, RegisterData anchor (with fallbacks)
+- `src/firebase.ts`, `src/services/firestoreSync.ts`, `DRAFT_firestore.rules`, `firestore.rules.test.ts`, `firebase-blueprint.json`, `security_spec.md` — Firestore sync and its rules
+
+## Red Lines
+- Money, signing, identity, permissions and privacy claims: Plan first, test concurrency / replay / expiry / reordering, then `harness-review`.
+- Take the current user from the session or token, never from the request body.
+- Secrets only in `.env` (ignored); `.env.example` keeps placeholders. Agent private keys never leave the server and never get committed.
+- Never present a simulated chain or payment result as real.
+
+# Mishaps and Prevention Rules
+<!-- Project-specific lessons from harness-postmortem. One rule, at most 2 sentences, with date and source. -->
