@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, SignInRequiredError } from './api';
+import { anchorModeLabel, shouldPollVerification } from './anchorDisplay';
 import { AgentRegistryView } from './components/AgentRegistryView';
 import { AuditLedgerView } from './components/AuditLedgerView';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -356,27 +357,88 @@ function AccordGateDashboard() {
   }
 
   async function handleAnchorAuditRoot() {
-    const latestEntry = auditLogs[0];
+    // S10 review R2: a RegisterData transaction costs a fee, so check before the wallet sends anything
+    // that the server will accept it: the session is still this owner, and the root is current and unfiltered.
+    if (walletAccount) {
+      const me = await api.authMe();
+      if (me.account !== walletAccount) {
+        notify('登录已失效或钱包账户不是当前 owner：请重新用钱包登录后再锚定（未发送交易）');
+        return;
+      }
+    }
+    const freshLogs = (await api.getAuditLogs('all', '')).logs;
+    if (walletAccount && freshLogs.length === 0) {
+      notify('审计账本为空，没有可锚定的根哈希（未发送交易）');
+      return;
+    }
+    const latestEntry = freshLogs[0];
     const rootHash = latestEntry?.entryHash ?? '0'.repeat(64);
-    const oldestSeq = auditLogs[auditLogs.length - 1]?.seq ?? 1;
+    const oldestSeq = freshLogs[freshLogs.length - 1]?.seq ?? 1;
     const newestSeq = latestEntry?.seq ?? 1;
     const auditRange = `#${oldestSeq}-#${newestSeq}`;
 
     const signed = await anchorAuditRootWithWallet(walletAccount, rootHash, auditRange);
     // The toast follows the anchor the server stored, which may be downgraded to simulated.
-    const { anchor } = await api.createAnchor({
-      signerAddress: signed.signerAddress,
-      txHash: signed.txHash,
-      mode: signed.mode,
-    });
+    let created: Awaited<ReturnType<typeof api.createAnchor>>;
+    try {
+      created = await api.createAnchor({
+        signerAddress: signed.signerAddress,
+        txHash: signed.txHash,
+        mode: signed.mode,
+        rootHash,
+        auditRange,
+      });
+    } catch (err) {
+      // Review N1: the wallet may already have sent a fee-paying transaction; say so, with its hash.
+      const why = err instanceof Error ? err.message : '未知错误';
+      notify(
+        signed.mode === 'browser-wallet-tx'
+          ? `钱包已发送交易 ${signed.txHash.slice(0, 12)}...，但服务器未记录（${why}）`
+          : `锚定未记录（${why}）`,
+      );
+      return;
+    }
+    const { anchor, notAccepted } = created;
     await refreshAll();
-    notify(
-      anchor.mode === 'browser-wallet-tx'
-        ? `钱包已提交 RegisterData 交易 (${anchor.txHash.slice(0, 12)}...)，服务器未核验`
-        : anchor.mode === 'wallet-signed-attestation'
-          ? '钱包只签名了根哈希（未上链，未发交易）'
-          : '模拟锚定：未签名、未上链',
-    );
+    if (notAccepted) {
+      notify(`钱包已上报${signed.mode === 'browser-wallet-tx' ? '交易' : '签名'}，但服务器未接受（${notAccepted}），记为模拟，未上链`);
+      return;
+    }
+    if (anchor.mode !== 'browser-wallet-tx') {
+      notify(anchor.mode === 'wallet-signed-attestation' ? '钱包只签名了根哈希（未上链，未发交易）' : '模拟锚定：未签名、未上链');
+      return;
+    }
+    notify(`钱包已提交 RegisterData 交易 (${anchor.txHash.slice(0, 12)}...)，服务器正在核验`);
+    await pollAnchorVerification(anchor.id);
+  }
+
+  // S10: testnet needs a few seconds to finalize; ask the server to check every 4 s for about 60 s.
+  async function pollAnchorVerification(id: string) {
+    const deadline = Date.now() + 60_000;
+    let latest: OnchainAnchorRecord | null = null;
+    while (Date.now() < deadline) {
+      try {
+        latest = (await api.verifyAnchor(id)).anchor;
+      } catch (err) {
+        notify(`核验请求失败：${err instanceof Error ? err.message : '未知错误'}`);
+        return;
+      }
+      await refreshAll();
+      if (!shouldPollVerification(latest)) break;
+      await new Promise((r) => window.setTimeout(r, 4000));
+    }
+    if (latest) notify(`锚定 ${latest.txHash.slice(0, 12)}...：${anchorModeLabel(latest)}`);
+  }
+
+  async function handleVerifyAnchor(id: string) {
+    try {
+      const { anchor } = await api.verifyAnchor(id);
+      await refreshAll();
+      notify(`锚定 ${anchor.txHash.slice(0, 12)}...：${anchorModeLabel(anchor)}`);
+    } catch (err) {
+      // Review R4: the 重新核验 button must show a failed request, not drop it.
+      notify(`核验请求失败：${err instanceof Error ? err.message : '未知错误'}`);
+    }
   }
 
   async function handleVerifyChain() {
@@ -703,6 +765,7 @@ function AccordGateDashboard() {
                   onSimulateTamper={handleSimulateTamper}
                   onRestoreTamper={handleRestoreTamper}
                   onAnchorAuditRoot={handleAnchorAuditRoot}
+                  onVerifyAnchor={handleVerifyAnchor}
                 />
               )}
             </>

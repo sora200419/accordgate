@@ -27,6 +27,7 @@ export const OWNER_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'DELETE', path: '/api/webhooks/:id' },
   { method: 'POST', path: '/api/webhooks/:id/test' },
   { method: 'POST', path: '/api/anchors' },
+  { method: 'POST', path: '/api/anchors/:id/verify' },
   { method: 'POST', path: '/api/sandbox/reset' },
 ];
 
@@ -207,6 +208,12 @@ export function createAuth(deps: AuthDeps) {
     next();
   }
 
+  /** The signed-in owner's account for this request, or null. Handlers use this, never the body. */
+  function ownerAccountOf(req: Request): string | null {
+    const session = sessionFrom(req);
+    return session && owners.has(session.account) ? session.account : null;
+  }
+
   /** Applies requireOwner to every OWNER_ROUTES entry; register before the routes. */
   function ownerGuard(req: Request, res: Response, next: NextFunction) {
     if (isOwnerRoute(req.method, req.path)) {
@@ -314,5 +321,5 @@ export function createAuth(deps: AuthDeps) {
     res.json({ signedOut: true });
   });
 
-  return { router, ownerGuard, requireOwner };
+  return { router, ownerGuard, requireOwner, ownerAccountOf };
 }

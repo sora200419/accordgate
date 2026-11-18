@@ -14,7 +14,7 @@ TODO (not set yet)
 1. Compliance officer signs in and registers an agent (DID, key, spend limits).
 2. Officer sets a gate policy on an endpoint (required predicates, price, caps).
 3. The agent calls the endpoint through the gateway; it is allowed, challenged for x402 payment, or blocked.
-4. The decision appears in the hash-chained audit ledger; the officer anchors the ledger root on Concordium testnet and can verify it on CCDScan.
+4. The decision appears in the hash-chained audit ledger; the officer anchors the ledger root on Concordium testnet; the server checks the transaction on testnet (finalized, right sender, right data) and only then links it to CCDScan.
 5. Officer revokes the agent (kill switch); the next call is blocked.
 
 ## Acceptance criteria

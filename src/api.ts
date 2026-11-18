@@ -226,10 +226,19 @@ export const api = {
     signerAddress: string | null;
     txHash: string;
     mode: OnchainAnchorRecord['mode'];
+    /** S10: the exact root and range the wallet registered, so the server can derive the payload. */
+    rootHash: string;
+    auditRange: string;
   }) =>
-    requestJson<{ anchor: OnchainAnchorRecord }>('/api/anchors', {
+    requestJson<{ anchor: OnchainAnchorRecord; notAccepted: string | null }>('/api/anchors', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+
+  /** S10: asks the server to look the anchor's transaction up on testnet. */
+  verifyAnchor: (id: string) =>
+    requestJson<{ anchor: OnchainAnchorRecord }>(`/api/anchors/${encodeURIComponent(id)}/verify`, {
+      method: 'POST',
     }),
 
   probeTestnet: () =>

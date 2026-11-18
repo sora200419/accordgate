@@ -70,8 +70,8 @@ export function AuditDecisionText({ decision }: { decision: AuditDecision }) {
     GOVERNANCE_REACTIVATED: '治理 · 恢复 Agent',
     AGENT_REGISTERED: '治理 · 本地登记 Agent（模拟 CIS-8004）',
     POLICY_UPDATED: '治理 · 更新门控策略',
-    ONCHAIN_ANCHORED: '存证 · 根哈希锚定 Testnet（钱包上报，未核验）',
-    ANCHOR_NOT_ONCHAIN: '存证 · 未上链（签名或模拟）',
+    ONCHAIN_ANCHORED: '存证 · 根哈希已锚定 Testnet（服务器已核验）',
+    ANCHOR_NOT_ONCHAIN: '存证 · 未上链（未核验、核验失败、签名或模拟）',
   };
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">

@@ -14,7 +14,7 @@ import {
 import type { AuditEntry, ChainVerifyResult, OnchainAnchorRecord } from '../types';
 import { AuditDecisionText } from './StatusBadge';
 import { SimulatedBadge } from './SimulatedBadge';
-import { anchorExplorerUrl, anchorModeLabel } from '../anchorDisplay';
+import { anchorExplorerUrl, anchorModeLabel, isVerifiedOnChain, shouldPollVerification } from '../anchorDisplay';
 
 const ZKP_SIMULATED_REASON = '自报属性 + SHA-256 承诺（模拟 ZKP，非零知识证明）';
 
@@ -30,6 +30,7 @@ interface AuditLedgerViewProps {
   onSimulateTamper: () => Promise<void>;
   onRestoreTamper: () => Promise<void>;
   onAnchorAuditRoot: () => Promise<void>;
+  onVerifyAnchor: (id: string) => Promise<void>;
 }
 
 export function AuditLedgerView({
@@ -44,8 +45,19 @@ export function AuditLedgerView({
   onSimulateTamper,
   onRestoreTamper,
   onAnchorAuditRoot,
+  onVerifyAnchor,
 }: AuditLedgerViewProps) {
   const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
+  const [checkingAnchorId, setCheckingAnchorId] = useState<string | null>(null);
+
+  async function handleRecheck(id: string) {
+    setCheckingAnchorId(id);
+    try {
+      await onVerifyAnchor(id);
+    } finally {
+      setCheckingAnchorId(null);
+    }
+  }
   const [verifying, setVerifying] = useState(false);
   const [tampering, setTampering] = useState(false);
   const [anchoring, setAnchoring] = useState(false);
@@ -289,7 +301,7 @@ export function AuditLedgerView({
               Concordium Testnet 存证锚点记录 ({onchainAnchors.length})
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              只有「链上 RegisterData」一行是钱包发出的交易（服务器未核验）；签名摘要和模拟锚定都没有上链
+              只有「服务器已核验」的行是 Testnet 上已最终确认的 RegisterData 交易；未核验、核验失败、签名摘要和模拟锚定都不算上链
             </p>
           </div>
         </div>
@@ -312,6 +324,9 @@ export function AuditLedgerView({
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {onchainAnchors.map((anchor) => {
                   const explorerUrl = anchorExplorerUrl(anchor);
+                  const label = anchorModeLabel(anchor);
+                  const verified = isVerifiedOnChain(anchor);
+                  const canRecheck = shouldPollVerification(anchor);
                   return (
                   <tr key={anchor.id}>
                     <td className="px-5 py-2.5 font-mono text-slate-700 dark:text-slate-200">
@@ -324,13 +339,23 @@ export function AuditLedgerView({
                       <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300">
                         {anchor.signerAddress ? `${anchor.signerAddress.slice(0, 14)}...` : '—（无签名）'}
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500">
-                        <span>{anchorModeLabel(anchor.mode)}</span>
-                        {anchor.mode !== 'browser-wallet-tx' && (
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+                        <span title={anchor.verification?.detail ?? undefined}>{label}</span>
+                        {!verified && (
                           <SimulatedBadge
-                            label={anchor.mode === 'simulated-payload' ? '模拟' : '未上链'}
-                            reason={anchorModeLabel(anchor.mode)}
+                            label={anchor.mode === 'simulated-payload' ? '模拟' : anchor.mode === 'browser-wallet-tx' ? '未核验' : '未上链'}
+                            reason={label}
                           />
+                        )}
+                        {canRecheck && (
+                          <button
+                            type="button"
+                            onClick={() => void handleRecheck(anchor.id)}
+                            disabled={checkingAnchorId === anchor.id}
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          >
+                            {checkingAnchorId === anchor.id ? '核验中…' : '重新核验'}
+                          </button>
                         )}
                       </div>
                     </td>
@@ -346,7 +371,10 @@ export function AuditLedgerView({
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
-                        <span className="text-slate-500" title="不是交易哈希，链上查不到">
+                        <span
+                          className="text-slate-500"
+                          title={anchor.mode === 'browser-wallet-tx' ? '服务器未核验，不提供链上链接' : '不是交易哈希，链上查不到'}
+                        >
                           {anchor.txHash.slice(0, 14)}...
                         </span>
                       )}
