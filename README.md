@@ -39,7 +39,7 @@ What the free plan means (accepted for the hackathon):
 - Sign-in sessions, challenges and agent nonces are in memory, so after a restart the owner has to sign in again. This is expected.
 - The free plan runs one instance, which is what the in-memory state (SECURITY S8, S9) needs.
 - Demo agent private keys sit in that same ephemeral file (SECURITY S2).
-- The live URL is not recorded here until the first deploy has been checked.
+- Live at https://accordgate.onrender.com/ (Render free plan). Checked on 2026-11-19 in Chrome: `/api/health` 200; the 5 tabs open with no console errors from the app; an owner route without a session answers 401; owner sign-in with the wallet works over https and the session cookie `ag_session` is HttpOnly, Secure and SameSite=Strict (seen in Chrome DevTools, Application > Cookies); a signed-in write (`POST /api/agents`) answers 201; the public `GET /api/agents` shows no private-key fields; after a restart the seed data is back (4 agents) and the owner is signed out. Not observed directly: that `autoDeployTrigger: checksPass` waits for CI (the one deploy on record, of the merge commit of PR 6, started 3.6 minutes after CI finished there: consistent, not proof). The core path steps 1-5 of BRIEF have not been run on the live site.
 
 ## Configuration
 Copy `.env.example` to `.env` and fill in the values.
