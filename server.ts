@@ -47,8 +47,9 @@ import type {
   WebhookEventType,
   X402Invoice,
 } from './server/types.ts';
+import { resolvePort } from './server/port.ts';
 
-const PORT = 3000;
+const PORT = resolvePort(process.env.PORT);
 const TESTNET_GRPC_HOST = 'grpc.testnet.concordium.com';
 const TESTNET_GRPC_PORT = 20000;
 

@@ -13,7 +13,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Persistence: JSON file `data/gateway-state.json` (server, regenerated if missing, git-ignored); optional Firebase Firestore + Google sign-in on the client (`firebase` ^13.4; its packages declare Node >=24.12, so npm warns on Node 22: accepted, browser-only), turned on only when `VITE_FIREBASE_*` env vars are set (`src/firebase.ts` `firebaseEnabled`)
 - Language: TypeScript 7 (`typescript ^7.0.2`, verified with `tsc --noEmit`)
 - Package manager: npm (`package-lock.json`; CI uses `npm ci`)
-- Hosting: TODO (the demo ran on AI Studio / Cloud Run)
+- Hosting: Render free web service from `render.yaml` (single instance, ephemeral disk: state resets to the seed on sleep and redeploy, owner signs in again). Not deployed yet until the first live check is recorded
 
 ## Common Commands
 - Install: `npm ci` (add deps with `npm install <pkg>`)
@@ -21,7 +21,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Dev server (Express + Vite middleware): `npm run dev`
 - Typecheck: `npm run lint` (runs `tsc --noEmit`)
 - Lint: TODO (`eslint.config.mjs` exists, eslint is not installed)
-- Test: `npm test` (`tsx --test server/auth.test.ts server/agentFreshness.test.ts server/anchorVerify.test.ts src/anchorDisplay.test.ts scripts/check-doc-packages.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
+- Test: `npm test` (`tsx --test server/auth.test.ts server/agentFreshness.test.ts server/port.test.ts server/anchorVerify.test.ts src/anchorDisplay.test.ts scripts/check-doc-packages.test.ts`, node:test, no network; `firestore.rules.test.ts` exists but nothing runs it)
 - Docs package check (F-001): `npm run check:docs` — backticked lower-case package names (scoped, or in `package-lock.json`) in README, CLAUDE.md and `docs/` must be direct dependencies (or listed in `ALLOWED` in `scripts/check-doc-packages.ts` with a reason)
 - Owner sign-in needs `OWNER_ACCOUNTS` (testnet addresses) in `.env`; owner-only routes are `OWNER_ROUTES` in `server/auth.ts`
 - Build: `npm run build`
@@ -30,10 +30,10 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 ## Environments
 | | Local | Staging / testnet | Production |
 | --- | --- | --- | --- |
-| URL | http://localhost:3000 (`PORT` in server.ts) | TODO | TODO |
+| URL | http://localhost:3000 (`PORT` env, default 3000) | TODO (Render, after first deploy) | TODO |
 | Chain network | Concordium testnet | Concordium testnet | TODO |
 | Secrets from | `.env` | Platform env vars | Platform env vars |
-| Deploys when | — | Every PR (preview) | Merge to main, after CI is green |
+| Deploys when | — | Push to `main` and CI passes (Render `autoDeployTrigger: checksPass`; no per-PR previews yet) | Same service for now (no separate production) |
 
 - CI: `.github/workflows/ci.yml` runs install, docs package check, typecheck, test, build.
 - Contracts read by the server: testnet `<10082,0>` (CIS-8004) and `<10081,0>` (CIS-8). Not deployed by us.
@@ -56,6 +56,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 ## Project Structure
 - `server.ts` — `createApp()` with all API routes (`/api/...`) and gateway logic; `startServer()` adds Vite/static and listens (only when run directly)
 - `server/auth.ts` — wallet sign-in (challenge/verify/me/logout), sessions, `OWNER_ROUTES` guard; `server/auth.test.ts`
+- `server/port.ts` — `resolvePort` (PORT from the platform env, default 3000); `server/port.test.ts`
 - `server/agentFreshness.ts` — agent request freshness (timestamp window, single-use nonce per DID, in memory); `server/agentFreshness.test.ts`
 - `server/anchorVerify.ts` — S10 testnet check of a `browser-wallet-tx` anchor (finalized, sender = anchoring owner, data = expected payload; retries, "not found" vs "unknown"); `server/anchorVerify.test.ts`
 - `src/components/SimulatedBadge.tsx` — the 模拟 badge; `src/anchorDisplay.ts` — which anchors get a CCDScan link (server-verified only), their labels, when to poll verify; `src/anchorDisplay.test.ts`

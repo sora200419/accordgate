@@ -30,7 +30,7 @@ TODO (not set yet)
 | Date | Milestone | Done when |
 | --- | --- | --- |
 | 2026-11-18 (local and CI green) | Demo builds and runs | `npm ci`, `npm run lint`, `npm run build` pass from a clean clone |
-| TODO | Walking skeleton deployed | App reachable at a staging URL, CI green |
+| TODO (slice `chore/deploy` in progress) | Walking skeleton deployed | App reachable at a public Render URL, CI green; state resets on sleep/redeploy (accepted) |
 | 2026-11-18 (done; CI green, run 44259897748) | Server API protected | Mutating routes require a signed-in owner (SECURITY S1) |
 | TODO | Feature freeze | Only bug fixes and demo prep after this date |
 | TODO | Delivery | Everything in the deliverables list below is submitted |
@@ -45,7 +45,7 @@ TODO (not set yet)
 ## Open questions
 - Which store is the source of truth: the server JSON file or Firestore?
 - Which parts must be real on testnet for judging (anchoring, x402 settlement, credential checks), and which may stay simulated if labelled?
-- Hosting platform?
+- Hosting platform: decided 2026-11-19, Render free web service (`render.yaml`). Open: whether judging needs state to survive restarts (then Render Starter + disk, about $7.25/month).
 
 ## Demo / delivery script
 <!-- Exact steps to show it working. Run this for real before every delivery. -->
