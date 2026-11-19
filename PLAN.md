@@ -24,6 +24,7 @@ Deploy — Walking skeleton deployed (BRIEF milestone). Branch `chore/deploy`, r
 - [x] User deployed on Render: https://accordgate.onrender.com/
 - [x] Live check (2026-11-19, Chrome): 5 tabs and no app console errors, `/api/health` 200, owner route 401 without session, wallet sign-in over https, signed-in write 201, no private-key fields in public `GET /api/agents`, restart resets to the seed (4 agents) and signs the owner out. Session cookie `ag_session` seen in DevTools as HttpOnly + Secure + SameSite=Strict. Open: `checksPass` behaviour consistent but not proven
 - [x] URL filled in CLAUDE.md and README, BRIEF milestone ticked
+- [x] BRIEF core path 1-5 on the live site (2026-11-19): register 201, policy 201, invoke 402 → simulated settle → 200 ALLOWED, replay 403, non-EU 403, anchor tx `9938d42d43e6…` verified by the server (2nd attempt), revoke → 403 BLOCKED_REVOKED; audit chain valid
 
 ## Next slices
 1. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors

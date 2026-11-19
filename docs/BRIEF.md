@@ -19,7 +19,7 @@ TODO (not set yet)
 
 ## Acceptance criteria
 - [ ] The app installs and builds from a clean clone
-- [ ] Core path steps 1–5 work in the deployed app
+- [x] Core path steps 1–5 work in the deployed app (2026-11-19, https://accordgate.onrender.com/; details in README "Deploy". x402 settlement and the "ZKP" checks are simulated and labelled)
 - [x] Every simulated result is labelled as simulated (S3, 2026-11-18)
 - [ ] TODO
 
