@@ -1,0 +1,18 @@
+# Render Blueprint: free web service, single instance, ephemeral filesystem.
+# State (data/gateway-state.json) resets to the seed after every sleep and redeploy.
+services:
+  - type: web
+    name: accordgate
+    runtime: node
+    plan: free
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Comma-separated testnet owner addresses; entered in the Render dashboard.
+      - key: OWNER_ACCOUNTS
+        sync: false

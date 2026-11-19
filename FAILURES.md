@@ -38,6 +38,20 @@ Mishaps that forced rework, with the rule each one produced. Newest at the botto
 - **Rule destination**: global ledger, merged into "Regression and rejection tests must first prove they catch the bug". Automation candidate (proposed to the user, not done): `~/.claude/hooks/harness/harness-guard.js` already denies copying a named `.env` file, but not a recursive directory copy (robocopy, xcopy /s, `cp -r`, `Copy-Item -Recurse`) whose source holds `.env*`.
 - **Recurrences**: none.
 
+### F-006 · 2026-11-19 · Cleanup stopped a process by listening port, and it was not mine
+- **What happened**: While checking the deploy slice's `PORT` fallback, I started the server with `PORT=abc` (so it falls back to 3000) without checking that 3000 was free. It failed with `EADDRINUSE`, which showed something else was listening there. My cleanup line then stopped whatever process owned port 3000 ("stopped fallback server on 3000"). That process was most likely the user's own `npm run dev` (not confirmed; I never looked at what it was). I noticed only when I wrote the summary and told the user to restart it.
+- **Root cause**: wrong assumption and not verified. I assumed anything on port 3000 after my test was my own leftover, and I identified the process by port number instead of by a PID I had recorded when I started it. The `EADDRINUSE` in my own output was already the proof that it was not mine.
+- **Fix**: nothing to undo on the code side; the user was told to restart their dev server. The later runs in this slice start test servers on an explicit free port and stop only the PID they started.
+- **Rule destination**: global ledger, "Only stop processes you started". Automation candidate (proposed to the user, not done): a `harness-guard.js` rule that asks before a command stops a process selected by port (`Get-NetTCPConnection ... | Stop-Process`, `netstat ... | taskkill`, `lsof -ti :N | kill`) or by name (`taskkill /IM node.exe`, `Stop-Process -Name node`).
+- **Recurrences**: none.
+
+### F-007 · 2026-11-19 · Called a merged PR "not opened yet" from a stale local main
+- **What happened**: Reviewing the deploy slice's report, I told the user "S10 has no PR yet" and to push `feat/anchor-verify` and open one. My evidence was `git log main..feat/anchor-verify` against local `main` (70bcfa0, never fetched; `origin/main` was 2f9b048) and `gh pr list --state open`, which leaves out merged PRs. PR 5 had been merged on 2026-11-18 at 16:06 UTC. The deploy session checked, found the merge and did not act on my advice.
+- **Root cause**: wrong assumption and not verified. I treated a local branch ref as the remote's state and an open-only PR list as all PRs, and stated a "fact" about live repository state without reading it from GitHub.
+- **Fix**: `git fetch` + `gh pr view 5` confirm the merge (MERGED, merge commit 2f9b048) and that `chore/deploy` sits on top of `origin/main`. The correction was given to the user.
+- **Rule destination**: global ledger, merged into "Check live state, don't infer it" (recurrence of the same habit as PayPal F-013, applied to git/PR state).
+- **Recurrences**: none.
+
 ## Pruning log
 
 | Date | Action (delete / merge / automate / promote to global) | Entries | Notes |

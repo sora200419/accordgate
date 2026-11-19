@@ -14,7 +14,7 @@ Verified on Node 22.15 / npm 11.3 (2026-11-18). Only start-up is checked so far,
 - Every owner route that changes data (agents, policies, webhooks, anchors, x402 settle, sandbox probe/sign/reset, audit tamper demo) needs a signed-in owner, whatever the path's letter case; the list is `OWNER_ROUTES` in `server/auth.ts`. Reads stay public. `GET /api/webhooks` shows only the last 4 characters of each signing secret; the full secret is returned once, when the webhook is created.
 - `/api/gateway/invoke` and MCP `tools/call` reject requests without `X-Agent-Signature`, `X-Agent-Timestamp` and `X-Agent-Nonce` (401). The agent signs `did|endpointPath|timestamp|nonce|cardHash` with Ed25519. The timestamp must be at most 120 s old and at most 30 s ahead, and each nonce works once per agent within that window; a replayed or stale request is blocked (403) and audited (`server/agentFreshness.ts`). The server signs with an agent's stored demo key only for the owner's sandbox (`/api/sandbox/probe`, `/api/sandbox/sign`). A request with a wrong signature or card hash is blocked and audited, but outside the owner's sandbox it does not count toward the circuit breaker, so strangers cannot suspend an agent.
 - Every simulated result carries a 模拟 badge in the UI and says so in API responses and audit text (SECURITY S3): x402 settlement hashes start with `sim_` and invoices have `simulated: true`; anchors made without a wallet have no signer and no CCDScan link; MCP `initialize` returns a `simulated` list.
-- `npm test` runs `server/auth.test.ts` (sign-in, replay, expiry, owner routes, agent signatures, agent request freshness, simulated labels), `server/agentFreshness.test.ts` (nonce store), `src/anchorDisplay.test.ts` (which anchors get a CCDScan link) and the docs package check tests, without network access.
+- `npm test` runs `server/auth.test.ts` (sign-in, replay, expiry, owner routes, agent signatures, agent request freshness, simulated labels), `server/agentFreshness.test.ts` (nonce store), `server/port.test.ts` (PORT parsing), `src/anchorDisplay.test.ts` (which anchors get a CCDScan link) and the docs package check tests, without network access.
 - `npm run check:docs` checks backticked lower-case package names in README, CLAUDE.md and `docs/` (scoped names, or names in `package-lock.json`): it fails when one is not a direct dependency, or when a line calls a direct dependency "not in package.json". Unscoped names that are not installed, upper-case names and names with a version inside the backticks are not checked.
 
 ## Run it
@@ -30,8 +30,21 @@ npm run dev
 
 Then open http://localhost:3000. `npm start` runs the same server; it serves the built `dist/` only when `NODE_ENV=production` is set and `npm run build` has been run.
 
+## Deploy (Render free web service)
+`render.yaml` is a Render Blueprint: one free web service, build `npm ci --include=dev && npm run build`, start `npm start`, health check `/api/health`, `NODE_ENV=production`, auto-deploy from `main` only after CI passes (`autoDeployTrigger: checksPass`; needs the GitHub checks on the commit, so Render has to see the CI workflow). In the Render dashboard choose New > Blueprint, pick this repository and enter `OWNER_ACCOUNTS` when asked. The server listens on the `PORT` the platform provides (default 3000 when unset or invalid).
+
+What the free plan means (accepted for the hackathon):
+- The service sleeps after 15 minutes without traffic; the first request afterwards takes about a minute. Open the URL before a demo.
+- The filesystem is ephemeral: `data/gateway-state.json` is rebuilt from the seed after every sleep and every redeploy, so agents, policies, anchors and audit entries created on the live site are lost then. No `ACCORDGATE_DB_PATH` is set and no disk is attached.
+- Sign-in sessions, challenges and agent nonces are in memory, so after a restart the owner has to sign in again. This is expected.
+- The free plan runs one instance, which is what the in-memory state (SECURITY S8, S9) needs.
+- Demo agent private keys sit in that same ephemeral file (SECURITY S2).
+- The live URL is not recorded here until the first deploy has been checked.
+
 ## Configuration
 Copy `.env.example` to `.env` and fill in the values.
+
+`PORT` (optional): HTTP port, default 3000. Hosting platforms set it themselves.
 
 `OWNER_ACCOUNTS` (server, required to make changes): comma-separated Concordium **testnet** account addresses that may sign in as the gateway owner. When it is empty, every change is refused with 503 and the sidebar shows 所有者登录未配置. Sign-in needs the Concordium Browser Wallet extension with one of those accounts.
 

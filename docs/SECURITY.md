@@ -63,6 +63,7 @@ Review of the imported Gemini demo done on 2026-11-18 by reading the code (not b
 | Firebase Auth + Firestore (`firebase`) | ^13.4.0, optional (off unless `VITE_FIREBASE_*` set) | — | TODO | TODO | Sync errors caught and logged in `App.tsx`; when off, sync throws "Firebase not configured" |
 | DNS TXT lookup (`node:dns`) | Node built-in | — | TODO | — | Returns `dnsResolved: false` |
 | Outbound webhooks | `fetch` | — | 4.5 s | — | Logged as failed delivery |
+| Render (hosting, `render.yaml`) | free web service | public https, TLS ends at Render | health check `/api/health` | — | Single instance (the free plan has 1), which S8/S9 need. Sleeps after 15 min idle, ephemeral disk: state (including agent demo keys, S2) resets to the seed on sleep and redeploy; owner sessions are lost. `OWNER_ACCOUNTS` is a dashboard secret (`sync: false`), not in the repo |
 | Gemini API (`@google/genai`) | removed from package.json (2026-11-18) | — | — | — | Was never imported; `GEMINI_API_KEY` removed from `.env.example` |
 
 ### Known dependency advisories
