@@ -3,7 +3,7 @@
 <!-- Rewritten at the end of Plan Mode for every slice. After /clear, a new session continues with "@PLAN.md". -->
 
 ## Slice
-Deploy — Walking skeleton deployed (BRIEF milestone). Branch `chore/deploy`, rebased on `main` after S10 was merged (PR 5, 2026-11-18, CI green). Local commit only so far: not pushed, no PR yet.
+Deploy — Walking skeleton deployed (BRIEF milestone). Branch `chore/deploy`, rebased on `main` after S10 was merged (PR 5, 2026-11-18, CI green). Merged as PR 6 (CI green). This follow-up records the live check.
 
 ## Decisions (made 2026-11-19)
 - Platform: Render free web service (compared with Railway and Fly.io: free tier, disk, GitHub auto-deploy, single instance)
@@ -21,9 +21,10 @@ Deploy — Walking skeleton deployed (BRIEF milestone). Branch `chore/deploy`, r
 - [x] `npm run lint`, `npm test` (101/101 with `server/port.test.ts`), `npm run check:docs`, `npm run build`
 - [x] Local production run with `PORT=4123`: `/api/health` 200, `dist/` served, owner route 401, 5 tabs no console errors; `PORT=abc` logs the warning and falls back to 3000
 - [x] `harness-review` PASS (round 1; S2 and S3 fixed in docs, no blocking issues)
-- [ ] User deploys on Render (their steps), sends URL or log
-- [ ] Live check: 5 tabs, `/api/health`, owner route 401 without session, wallet sign-in over https, restart resets to seed and requires sign-in
-- [ ] Only then: fill the URL in CLAUDE.md and README, tick the BRIEF milestone
+- [x] User deployed on Render: https://accordgate.onrender.com/
+- [x] Live check (2026-11-19, Chrome): 5 tabs and no app console errors, `/api/health` 200, owner route 401 without session, wallet sign-in over https, signed-in write 201, no private-key fields in public `GET /api/agents`, restart resets to the seed (4 agents) and signs the owner out. Session cookie `ag_session` seen in DevTools as HttpOnly + Secure + SameSite=Strict. Open: `checksPass` behaviour consistent but not proven
+- [x] URL filled in CLAUDE.md and README, BRIEF milestone ticked
+- [x] BRIEF core path 1-5 on the live site (2026-11-19): register 201, policy 201, invoke 402 → simulated settle → 200 ALLOWED, replay 403, non-EU 403, anchor tx `9938d42d43e6…` verified by the server (2nd attempt), revoke → 403 BLOCKED_REVOKED; audit chain valid
 
 ## Next slices
 1. S4 — SSRF guard on webhooks; S5 — remove PII from error logs; S6 — stop swallowing wallet errors

@@ -13,7 +13,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Persistence: JSON file `data/gateway-state.json` (server, regenerated if missing, git-ignored); optional Firebase Firestore + Google sign-in on the client (`firebase` ^13.4; its packages declare Node >=24.12, so npm warns on Node 22: accepted, browser-only), turned on only when `VITE_FIREBASE_*` env vars are set (`src/firebase.ts` `firebaseEnabled`)
 - Language: TypeScript 7 (`typescript ^7.0.2`, verified with `tsc --noEmit`)
 - Package manager: npm (`package-lock.json`; CI uses `npm ci`)
-- Hosting: Render free web service from `render.yaml` (single instance, ephemeral disk: state resets to the seed on sleep and redeploy, owner signs in again). Not deployed yet until the first live check is recorded
+- Hosting: Render free web service from `render.yaml` (single instance, ephemeral disk: state resets to the seed on sleep and redeploy, owner signs in again). Live at https://accordgate.onrender.com/, checked 2026-11-19 (details in README "Deploy")
 
 ## Common Commands
 - Install: `npm ci` (add deps with `npm install <pkg>`)
@@ -30,7 +30,7 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 ## Environments
 | | Local | Staging / testnet | Production |
 | --- | --- | --- | --- |
-| URL | http://localhost:3000 (`PORT` env, default 3000) | TODO (Render, after first deploy) | TODO |
+| URL | http://localhost:3000 (`PORT` env, default 3000) | https://accordgate.onrender.com/ (Render free) | TODO |
 | Chain network | Concordium testnet | Concordium testnet | TODO |
 | Secrets from | `.env` | Platform env vars | Platform env vars |
 | Deploys when | — | Push to `main` and CI passes (Render `autoDeployTrigger: checksPass`; no per-PR previews yet) | Same service for now (no separate production) |
