@@ -57,3 +57,4 @@ Mishaps that forced rework, with the rule each one produced. Newest at the botto
 | Date | Action (delete / merge / automate / promote to global) | Entries | Notes |
 | --- | --- | --- | --- |
 | 2026-11-18 | merge ×2 | F-001, F-002 | Global ledger 30 → 24 (5 merges, 1 rule split back out, #30 trimmed, 2 demotions). Project ledger unchanged at 2. |
+| 2026-11-25 | merge ×1, shorten ×2 | F-006, F-007 (rules added since the last prune) | Global ledger 26 → 25: "Concurrent read-modify-write" absorbed "Read external state inside the lock" (both PayPal F-003); it and "Trace claims to code…" shortened to the 450-character lint limit without dropping a check. Still 25 rules, above the warn level of 20 (error at 30); more cuts need a decision on which rules to drop. Backup before the edit: `~/.claude/CLAUDE.md.bak-2026-11-25`. |
