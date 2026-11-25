@@ -52,6 +52,8 @@ MVP / hackathon. Workflow: follow `~/.claude/skills/new-project/SOP.md` for this
 - Branches: `feat/…`, `fix/…`, `chore/…`.
 - Conventional Commits (`feat(scope): …`); one slice per commit.
 - Never commit `.env*` (except `.env.example`), `data/`, keys or build output.
+- `main` is protected by the GitHub ruleset `main-ci` (active since 2026-11-25): changes reach `main` only through a PR whose `ci` check passes; no force push, no branch deletion; the bypass list is empty. Changing the ruleset or adding a bypass is done by the user in GitHub Settings > Rules, never by Claude.
+- Render deploys `main` only after CI passes (`autoDeployTrigger: checksPass`, shown by experiment on 2026-11-25: README "Deploy"). Do not click Manual Deploy or Restart while testing that, because manual deploys skip the check.
 
 ## Project Structure
 - `server.ts` — `createApp()` with all API routes (`/api/...`) and gateway logic; `startServer()` adds Vite/static and listens (only when run directly)
